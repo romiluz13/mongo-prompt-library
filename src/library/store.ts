@@ -1,12 +1,15 @@
 import type { WithId } from "mongodb";
-import { fewShots, overlays, prompts, runs, withTx } from "./db";
+import { fewShots, guardrails, overlays, prompts, runs, tools, withTx } from "./db";
 import type {
   AgentPrompt,
   FewShot,
+  Guardrail,
   OverlayPatch,
   PromptOverlay,
+  ResolvedBundle,
   ResolvedPrompt,
   Run,
+  ToolDef,
 } from "./types";
 
 const FIELD = "system_prompt";
@@ -366,6 +369,87 @@ export function subMacros(body: string, macros: Record<string, string>): string 
   );
 }
 
+// ---- tools + guardrails ----------------------------------------------------
+
+/** Tools available to an agent (or all agents via the "*" wildcard). */
+export async function toolsForAgent(agent: string): Promise<WithId<ToolDef>[]> {
+  return tools.find({ agents: { $in: [agent, "*"] } }).sort({ name: 1 }).toArray();
+}
+
+export async function listTools(): Promise<WithId<ToolDef>[]> {
+  return tools.find().sort({ name: 1 }).toArray();
+}
+
+/** Create or evolve a tool definition; bumping the version keeps intent. */
+export async function upsertTool(
+  def: Omit<ToolDef, "version" | "updated_at" | "updated_by">,
+  updatedBy: string,
+): Promise<WithId<ToolDef>> {
+  const existing = await tools.findOne({ name: def.name });
+  const version = (existing?.version ?? 0) + 1;
+  const now = new Date();
+  const doc = { ...def, version, updated_by: updatedBy, updated_at: now };
+  await tools.updateOne(
+    { name: def.name },
+    { $set: doc },
+    { upsert: true },
+  );
+  return (await tools.findOne({ name: def.name }))!;
+}
+
+export async function deleteTool(name: string): Promise<void> {
+  const res = await tools.deleteOne({ name });
+  if (res.deletedCount === 0) throw new StoreError(`tool ${name} not found`, 404);
+}
+
+/** Active guardrails that apply to an agent (wildcard "*" included). */
+export async function guardrailsForAgent(agent: string): Promise<WithId<Guardrail>[]> {
+  return guardrails
+    .find({ active: true, agents: { $in: [agent, "*"] } })
+    .sort({ name: 1 })
+    .toArray();
+}
+
+export async function listGuardrails(): Promise<WithId<Guardrail>[]> {
+  return guardrails.find().sort({ name: 1 }).toArray();
+}
+
+export async function upsertGuardrail(
+  def: Omit<Guardrail, "updated_at">,
+): Promise<void> {
+  await guardrails.updateOne(
+    { name: def.name },
+    { $set: { ...def, updated_at: new Date() } },
+    { upsert: true },
+  );
+}
+
+export async function deleteGuardrail(name: string): Promise<void> {
+  const res = await guardrails.deleteOne({ name });
+  if (res.deletedCount === 0) throw new StoreError(`guardrail ${name} not found`, 404);
+}
+
+/**
+ * The full bundle an agent runs with: resolved prompt + callable tools +
+ * active guardrails. One call gives the runner everything it needs — the
+ * same view the console and the API expose, so what you see is what runs.
+ */
+export async function resolveBundle(
+  agent: string,
+  tenant?: string | null,
+): Promise<ResolvedBundle | null> {
+  const prompt = await resolvePrompt(agent, tenant);
+  if (!prompt) return null;
+  const [ts, gs] = await Promise.all([toolsForAgent(agent), guardrailsForAgent(agent)]);
+  const strip = <T extends { _id: unknown }>({ _id, ...rest }: T) => rest as Omit<T, "_id">;
+  return {
+    prompt,
+    tools: ts.map(strip),
+    guardrails: gs.map(strip),
+    resolved_at: new Date().toISOString(),
+  };
+}
+
 // ---- runs + A/B ------------------------------------------------------------
 
 /** Record one executed run (written by the run executor after a completion). */
@@ -380,7 +464,7 @@ export async function listRuns(agent?: string, limit = 20) {
     .find(agent ? { agent } : {})
     .sort({ ts: -1 })
     .limit(limit)
-    .project({ input: 1, output: 1, agent: 1, variant: 1, tenant: 1, prompt_version: 1, model: 1, latency_ms: 1, tokens_in: 1, tokens_out: 1, verdict: 1, ts: 1 })
+    .project({ input: 1, output: 1, agent: 1, variant: 1, tenant: 1, prompt_version: 1, model: 1, latency_ms: 1, tokens_in: 1, tokens_out: 1, verdict: 1, guardrail_blocks: 1, ts: 1 })
     .toArray();
 }
 

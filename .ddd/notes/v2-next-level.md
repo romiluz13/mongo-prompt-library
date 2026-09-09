@@ -123,6 +123,27 @@ through the configured gateway. Slice 7 verified in the browser.
       hybrid search panel with a semantic↔lexical weight slider and
       per-hit attribution bars (browser-verified: slider at 54% re-weighted
       bars to 54/46; API extremes verified at 0 and 1)
-- [ ] Slice 5 — tools + guardrails bundle
+- [x] Slice 5 — tools + guardrails bundle VERIFIED live on Atlas with real
+      LLM runs: `tools` (JSON-Schema function defs, versioned on upsert,
+      agent-scoped with "*" wildcard) + `guardrails` (3 kinds:
+      input_block / banned_phrase / max_tokens) collections with
+      $jsonSchema contracts (probe: code 121 rejects bad tool name pattern,
+      non-object parameters, bad guardrail kind); `resolveBundle` extends
+      resolvePrompt — `GET /api/resolve/:agent?bundle=1` returns prompt +
+      tools + active guardrails in one read; runner exposes agent tools via
+      function calling in every run (meta tool stays chat-only), validates
+      args against the stored JSON Schema before executing demo executors
+      (lookup_order, search_knowledge, escalate_to_human, search_codebase);
+      guardrails enforced server-side: injection input ("ignore your
+      previous instructions…") refused pre-LLM with 0 tokens spent and a
+      recorded blocked run, banned phrase ("guaranteed refund") cut the
+      stream mid-generation with guardrail_blocks recorded on the Run doc,
+      max_tokens capped marketing-copy at token_cap 400 (start event);
+      `guardrail_blocks` added to Run contract + listRuns projection;
+      seeded 4 tools + 4 guardrails (backfill like eval cases); console
+      renders Tools/Guardrails sections per agent, generalized tool_call /
+      tool_result events (name + args + result preview), guardrail block
+      banners, and tools/guardrails counts in the run meta line
+      (browser-verified with a live double-tool-call run)
 - [ ] Slice 6 — observability + alerting
 - [ ] Slice 7 — showcase surface + deploy + README

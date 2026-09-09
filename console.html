@@ -343,7 +343,7 @@ async function openAgent(agent) {
 async function renderDetail() {
   if (!currentAgent) return;
   const agent = currentAgent;
-  const [active, versions, overlays, fewshots, ab, runs, evalcases, evalruns] = await Promise.all([
+  const [active, versions, overlays, fewshots, ab, runs, evalcases, evalruns, agentTools, agentGuardrails] = await Promise.all([
     api(`/api/prompts/${agent}/active`).catch(() => null),
     api(`/api/prompts/${agent}/versions`),
     api(`/api/overlays/${agent}`),
@@ -352,6 +352,8 @@ async function renderDetail() {
     api(`/api/runs?agent=${agent}&k=10`).catch(() => []),
     api(`/api/eval/cases/${agent}`).catch(() => []),
     api(`/api/eval/${agent}`).catch(() => []),
+    api(`/api/tools/${agent}`).catch(() => []),
+    api(`/api/guardrails/${agent}`).catch(() => []),
   ]);
   if (currentAgent !== agent) return; // switched mid-flight
   const variants = active?.variants ?? [];
@@ -527,6 +529,30 @@ async function renderDetail() {
         <input id="fsText" placeholder="a new few-shot example (input → ideal handling)" />
         <button class="small" onclick="doAddFewShot()">add</button>
       </div>
+
+      <h4>Tools <span class="sub">(functions the agent may call — JSON-Schema checked)</span></h4>
+      ${agentTools.length === 0 ? `<div class="empty">no tools — this agent replies in text only</div>` : ""}
+      ${agentTools.map(t => `
+        <div class="fewshot">
+          <div class="fshead">
+            <span class="score">⟵ ${esc(t.name)} <span class="sub">v${t.version}</span></span>
+            <span class="sub">${t.agents.includes("*") ? "all agents" : esc(t.agents.join(", "))}</span>
+          </div>
+          <div class="sub">${esc(t.description)}</div>
+          <code style="display:block;margin-top:4px">${esc(JSON.stringify(t.parameters, null, 1).slice(0, 400))}</code>
+        </div>`).join("")}
+
+      <h4>Guardrails <span class="sub">(enforced by the runner, not the model)</span></h4>
+      ${agentGuardrails.length === 0 ? `<div class="empty">no guardrails</div>` : ""}
+      ${agentGuardrails.map(g => `
+        <div class="fewshot">
+          <div class="fshead">
+            <span class="score">${g.kind === "input_block" ? "🛡 input" : g.kind === "banned_phrase" ? "✂ output" : "⏱ tokens"}</span>
+            <span>${esc(g.name)} ${g.active ? "" : '<span class="sub">(inactive)</span>'}</span>
+          </div>
+          <div class="sub">${esc(g.description)}</div>
+          ${Array.isArray(g.value) ? `<div class="sub"><b>phrases:</b> ${esc(g.value.map(v => `"${v}"`).join(", ").slice(0, 220))}</div>` : `<div class="sub"><b>cap:</b> ${g.value} tokens</div>`}
+        </div>`).join("")}
     </div>
   </div>`;
 
@@ -712,22 +738,34 @@ async function doRun() {
         if (!line.startsWith("data:")) continue;
         const ev = JSON.parse(line.slice(5));
         if (ev.type === "start") {
-          out.innerHTML = `<span class="run-meta">v${ev.version} · variant ${ev.variant ?? "—"} · ${esc(ev.model)}${ev.tenant ? " · tenant " + esc(ev.tenant) : ""}${ev.few_shots ? " · few-shots ✓" : ""}</span>\n`;
+          const extras = [
+            ev.tools?.length ? `${ev.tools.length} tools` : null,
+            ev.guardrails?.length ? `${ev.guardrails.length} guardrails` : null,
+          ].filter(Boolean).join(" · ");
+          out.innerHTML = `<span class="run-meta">v${ev.version} · variant ${ev.variant ?? "—"} · ${esc(ev.model)}${ev.tenant ? " · tenant " + esc(ev.tenant) : ""}${ev.few_shots ? " · few-shots ✓" : ""}${extras ? " · " + extras : ""}</span>\n`;
           out.insertAdjacentHTML("beforeend", `<span id="streamtext"></span><span class="cursor"> </span>`);
         } else if (ev.type === "delta") {
           const st = $("streamtext");
           if (st) st.textContent += ev.text;
           out.scrollTop = out.scrollHeight;
+        } else if (ev.type === "guardrail_block") {
+          document.querySelector(".cursor")?.remove();
+          out.insertAdjacentHTML("beforeend",
+            `\n<span class="err">⛔ guardrail ${esc(ev.guardrails.join(", "))} — ${esc(ev.phase === "input" ? "run refused before any LLM call (0 tokens spent)" : "stream cut mid-generation")}</span>\n`);
         } else if (ev.type === "tool_call") {
-          out.insertAdjacentHTML("beforeend", `\n<span class="flash-note">⟳ tool ${esc(ev.name)} → drafting a new prompt version…</span>\n`);
+          const args = ev.arguments ? Object.entries(ev.arguments).map(([k, v]) => `${k}=${String(v).slice(0, 60)}`).join(" · ") : "";
+          out.insertAdjacentHTML("beforeend", `\n<span class="flash-note">⟳ tool ${esc(ev.name)}(${esc(args)})</span>\n`);
         } else if (ev.type === "tool_result") {
           out.insertAdjacentHTML("beforeend", ev.ok
-            ? `<span class="flash-note">✓ draft v${ev.result.version} created — it goes live only after review + publish (${esc(ev.result.changelog)})</span>\n`
+            ? (ev.name === "write_prompt_version"
+              ? `<span class="flash-note">✓ draft v${ev.result.version} created — it goes live only after review + publish (${esc(ev.result.changelog)})</span>\n`
+              : `<span class="flash-note">✓ ${esc(ev.name)} → ${esc(JSON.stringify(ev.result).slice(0, 160))}…</span>\n`)
             : `<span class="err">✗ ${esc(ev.error.message)}</span>\n`);
         } else if (ev.type === "done") {
           document.querySelector(".cursor")?.remove();
           $("runMeta").textContent =
-            `latency ${ev.run.latency_ms}ms · tokens ${ev.run.tokens_in}/${ev.run.tokens_out} · recorded to runs`;
+            `latency ${ev.run.latency_ms}ms · tokens ${ev.run.tokens_in}/${ev.run.tokens_out} · recorded to runs` +
+            (ev.run.guardrail_blocks?.length ? ` · guardrails fired: ${ev.run.guardrail_blocks.join(", ")}` : "");
           // find our run id in the recent list (freshest for this agent)
           try {
             const runs = await api(`/api/runs?agent=${agent}&k=1`);

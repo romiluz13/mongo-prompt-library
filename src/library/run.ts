@@ -10,6 +10,7 @@
  *   {"type":"start","variant":"B","version":3,"model":"...","tenant":"acme","few_shots":2}
  *   {"type":"delta","text":"..."}        (many)
  *   {"type":"tool_call",...} → {"type":"tool_result",...}  (at most one round)
+ *   {"type":"guardrail_block","phase":"input"|"output",...}  (run refused or cut)
  *   {"type":"done","run":{...},"ab":[...],"tools":[...]} or {"type":"error","error":"..."}
  */
 
@@ -17,7 +18,7 @@ import * as store from "./store";
 import { semanticFewShots } from "./semantic";
 import { llmConfig, streamChat } from "./llm";
 import type { ChatMessage, ChatTool, ToolCall } from "./llm";
-import type { Run, Variant } from "./types";
+import type { Run, ToolDef, Variant } from "./types";
 
 const sse = (payload: unknown) => `data: ${JSON.stringify(payload)}\n\n`;
 
@@ -111,9 +112,152 @@ export interface RunRequest {
   chat?: boolean;
 }
 
+/**
+ * Demo tool executors: each seeded tool gets a deterministic fake backend so
+ * function calling is fully demonstrable without real integrations. Unknown
+ * tools still "execute" and echo their arguments — the plumbing is real,
+ * only the side effects are simulated.
+ */
+const DEMO_EXECUTORS: Record<string, (args: Record<string, unknown>) => unknown> = {
+  lookup_order: args => ({
+    order_id: String(args.order_id ?? "ORD-1042"),
+    status: "shipped",
+    charges: [
+      { amount: 49.0, at: "2025-06-01T09:12:00Z" },
+      { amount: 49.0, at: "2025-06-01T09:12:04Z" },
+    ],
+    duplicate_charge: true,
+    refund_policy:
+      "duplicate charges are refunded to the original payment method within 5 business days",
+  }),
+  search_knowledge: args => ({
+    query: args.query ?? "",
+    hits: [
+      {
+        title: "Refund policy",
+        snippet:
+          "Refunds for duplicate charges are issued within 5 business days to the original payment method.",
+      },
+      {
+        title: "Escalation SLA",
+        snippet: "P1 tickets must receive a human response within 15 minutes.",
+      },
+    ],
+  }),
+  escalate_to_human: args => ({
+    ticket_id: "TCK-" + (1000 + Math.floor(Math.random() * 9000)),
+    queue: String(args.queue ?? "platform-oncall"),
+    eta_minutes: 15,
+    acknowledged: true,
+  }),
+  search_codebase: args => ({
+    query: args.query ?? "",
+    files: [
+      { path: "src/library/run.ts", reason: "run executor: where tools are dispatched" },
+      { path: "src/library/store.ts", reason: "persistence and resolution" },
+    ],
+  }),
+};
+
+function executeDemoTool(name: string, args: Record<string, unknown>): unknown {
+  const exec = DEMO_EXECUTORS[name];
+  return exec
+    ? exec(args)
+    : { demo: true, note: "executed in demo mode", arguments: args };
+}
+
+/**
+ * Check arguments against the tool's JSON Schema: required fields present,
+ * and declared primitive types (string/number/boolean) honored. The schema
+ * is the contract; the runner refuses to execute against it.
+ */
+export function validateToolArgs(
+  parameters: Record<string, unknown>,
+  raw: string,
+): Record<string, unknown> | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const args = value as Record<string, unknown>;
+
+  const required = Array.isArray(parameters.required)
+    ? (parameters.required as unknown[]).filter(
+        (k): k is string => typeof k === "string",
+      )
+    : [];
+  for (const key of required) {
+    if (args[key] === undefined || args[key] === null) return null;
+  }
+
+  const props =
+    parameters.properties && typeof parameters.properties === "object"
+      ? (parameters.properties as Record<string, unknown>)
+      : {};
+  for (const [key, val] of Object.entries(args)) {
+    const p = props[key];
+    if (!p || typeof p !== "object") continue;
+    const t = (p as { type?: unknown }).type;
+    if (t === "string" && typeof val !== "string") return null;
+    if ((t === "number" || t === "integer") && typeof val !== "number") return null;
+    if (t === "boolean" && typeof val !== "boolean") return null;
+  }
+  return args;
+}
+
+/**
+ * Guardrail checks: input_block phrases refuse the run before any LLM call;
+ * banned_phrase cuts the stream the moment one appears in the output;
+ * max_tokens caps the completion budget. All server-authoritative.
+ */
+export function checkInputGuardrails(
+  guardrails: { name: string; kind: string; value: string[] | number }[],
+  input: string,
+): string[] {
+  const lower = input.toLowerCase();
+  return guardrails
+    .filter(
+      g =>
+        g.kind === "input_block" &&
+        Array.isArray(g.value) &&
+        g.value.some(p => lower.includes(p.toLowerCase())),
+    )
+    .map(g => g.name);
+}
+
+export function scanBannedPhrases(
+  guardrails: { name: string; kind: string; value: string[] | number }[],
+  output: string,
+): string[] {
+  const lower = output.toLowerCase();
+  return guardrails
+    .filter(
+      g =>
+        g.kind === "banned_phrase" &&
+        Array.isArray(g.value) &&
+        g.value.some(p => lower.includes(p.toLowerCase())),
+    )
+    .map(g => g.name);
+}
+
+export function tokenCap(
+  guardrails: { kind: string; value: string[] | number }[],
+  fallback = 2000,
+): number {
+  let cap = fallback;
+  for (const g of guardrails) {
+    if (g.kind === "max_tokens" && typeof g.value === "number") {
+      cap = Math.min(cap, g.value);
+    }
+  }
+  return cap;
+}
+
 /** Weighted, server-authoritative variant routing (falls back to unpinned). */
-export function pickVariant(
-  variants: Variant[],
+export function pickVariant(  variants: Variant[],
   pin?: string | null,
 ): Variant | null {
   if (pin) {
@@ -186,8 +330,62 @@ export async function* streamRunEvents(
     console.warn("[run] few-shot retrieval failed (continuing without):", e);
   }
 
-  const model = llmConfig().model;
   const t0 = Date.now();
+
+  // the agent's config bundle: callable tools + active guardrails
+  const bundleTools = await store.toolsForAgent(agent);
+  const bundleGuardrails = await store.guardrailsForAgent(agent);
+  let outputBlocks: string[] = [];
+
+  // input guardrails: the run is refused before any LLM call is spent
+  const inputBlocks = checkInputGuardrails(bundleGuardrails, req.input);
+  if (inputBlocks.length > 0) {
+    yield sse({
+      type: "guardrail_block",
+      phase: "input",
+      guardrails: inputBlocks,
+      message:
+        "input refused by guardrail — the run never reached the model; " +
+        "no tokens spent, nothing to moderate after the fact",
+    });
+    const blockedRun: Run = {
+      ts: new Date(),
+      agent,
+      prompt_version: resolved.version,
+      variant: variant?.id ?? null,
+      tenant: req.tenant ?? null,
+      input: req.input,
+      output: "",
+      model: llmConfig().model,
+      latency_ms: Date.now() - t0,
+      tokens_in: 0,
+      tokens_out: 0,
+      guardrail_blocks: inputBlocks,
+    };
+    await store.insertRun(blockedRun);
+    return;
+  }
+
+  const banned = bundleGuardrails.filter(g => g.kind === "banned_phrase");
+  const scanOutput = (text: string): string[] =>
+    scanBannedPhrases(banned, text).filter(n => !outputBlocks.includes(n));
+
+  const model = llmConfig().model;
+
+  // the agent's own tools are always offered — they're capabilities of the
+  // agent, not conveniences of the chat UI. The prompt-edit meta-tool stays
+  // chat-only: ambient task runs proved the model calls it spuriously.
+  const agentTools: ChatTool[] = bundleTools.map(t => ({
+    type: "function",
+    function: { name: t.name, description: t.description, parameters: t.parameters },
+  }));
+  const offeredTools =
+    req.chat && agentTools.length === 0
+      ? [WRITE_PROMPT_VERSION_TOOL]
+      : req.chat
+        ? [WRITE_PROMPT_VERSION_TOOL, ...agentTools]
+        : agentTools;
+  const maxTokens = tokenCap(bundleGuardrails);
 
   yield sse({
     type: "start",
@@ -196,6 +394,9 @@ export async function* streamRunEvents(
     model,
     tenant: req.tenant ?? null,
     few_shots: fewShotCount,
+    tools: offeredTools.map(t => t.function.name),
+    guardrails: bundleGuardrails.map(g => g.name),
+    token_cap: maxTokens,
   });
 
   let output = "";
@@ -208,23 +409,35 @@ export async function* streamRunEvents(
   ];
   let toolCalls: ToolCall[] | null = null;
   try {
-    // the edit tool is offered only in conversational runs: ambient task
-    // runs proved the model calls it spuriously, creating junk versions
     for await (const ev of streamChat({
       messages,
-      ...(req.chat ? { tools: [WRITE_PROMPT_VERSION_TOOL], toolChoice: "auto" as const } : {}),
-      maxTokens: 2000,
+      ...(offeredTools.length > 0
+        ? { tools: offeredTools, toolChoice: "auto" as const }
+        : {}),
+      maxTokens,
     })) {
       if (ev.text) {
         output += ev.text;
         yield sse({ type: "delta", text: ev.text });
+        // output guardrails: cut the stream the moment a banned phrase lands
+        const hits = scanOutput(output);
+        if (hits.length > 0) {
+          outputBlocks = [...outputBlocks, ...hits];
+          yield sse({
+            type: "guardrail_block",
+            phase: "output",
+            guardrails: hits,
+            message: "stream cut by guardrail — the phrase never completes",
+          });
+          break;
+        }
       }
       if (ev.toolCalls) toolCalls = ev.toolCalls;
       if (ev.tokensIn !== undefined) tokensIn += ev.tokensIn;
       if (ev.tokensOut !== undefined) tokensOut += ev.tokensOut;
     }
 
-    if (toolCalls && toolCalls.length > 0) {
+    if (!outputBlocks.length && toolCalls && toolCalls.length > 0) {
       messages.push({
         role: "assistant",
         content: null,
@@ -237,28 +450,17 @@ export async function* streamRunEvents(
 
       for (const [index, call] of toolCalls.entries()) {
         const callId = call.id || `call_${index + 1}`;
-        let toolResult:
-          | ToolFailure
-          | {
-              ok: true;
-              result: {
-                agent: string;
-                version: number;
-                status: "draft";
-                changelog: string;
-                updated_by: string;
-                variants_cleared: string[];
-                next: string;
-              };
-            };
+        // The tool contract: meta-tool handled in-store, agent tools
+        // validated against their JSON Schema then executed.
+        const def = bundleTools.find(t => t.name === call.name);
 
-        if (call.name !== WRITE_PROMPT_VERSION_TOOL.function.name) {
-          toolResult = toolFailure(
-            "unknown_tool",
-            `Tool ${call.name || "(unnamed)"} is not available.`,
-          );
-        } else {
+        if (
+          call.name === WRITE_PROMPT_VERSION_TOOL.function.name &&
+          req.chat
+        ) {
+          // ---- the prompt-edit meta-tool (unchanged behavior) ----------
           const args = parsePromptVersionArgs(call.arguments);
+          let toolResult: ToolFailure | { ok: true; result: Record<string, unknown> };
           if (!args) {
             toolResult = toolFailure(
               "invalid_arguments",
@@ -271,14 +473,11 @@ export async function* streamRunEvents(
               name: call.name,
               arguments: args,
             });
-
-            const variantsCleared = active.variants.map(v => v.id);
             try {
-              const updatedBy = `agent:${agent}`;
               const doc = await store.createVersion(agent, {
                 body: args.body,
                 changelog: args.changelog,
-                updated_by: updatedBy,
+                updated_by: `agent:${agent}`,
                 variants: active.variants.map(v => ({ ...v, body: null })),
               });
               toolResult = {
@@ -289,7 +488,7 @@ export async function* streamRunEvents(
                   status: "draft",
                   changelog: doc.changelog,
                   updated_by: doc.updated_by,
-                  variants_cleared: variantsCleared,
+                  variants_cleared: active.variants.map(v => v.id),
                   next:
                     "draft created — submit it for review, then approve and publish " +
                     "from the console to go live",
@@ -303,32 +502,74 @@ export async function* streamRunEvents(
               );
             }
           }
+          yield sse({ type: "tool_result", call_id: callId, name: call.name, ...toolResult });
+          toolOutcomes.push({
+            call_id: callId,
+            name: call.name,
+            ok: toolResult.ok,
+            ...(toolResult.ok && typeof toolResult.result.version === "number"
+              ? { version: toolResult.result.version }
+              : {}),
+          });
+          messages.push({
+            role: "tool",
+            tool_call_id: callId,
+            content: JSON.stringify(toolResult),
+          });
+        } else if (def) {
+          // ---- an agent tool from the store -----------------------------
+          const args = validateToolArgs(def.parameters, call.arguments);
+          let toolResult: ToolFailure | { ok: true; result: unknown };
+          if (!args) {
+            toolResult = toolFailure(
+              "invalid_arguments",
+              `arguments for ${def.name} do not match its JSON Schema (required: ` +
+                `${(def.parameters.required as string[] | undefined)?.join(", ") ?? "—"})`,
+            );
+          } else {
+            yield sse({ type: "tool_call", call_id: callId, name: call.name, arguments: args });
+            const result = executeDemoTool(def.name, args);
+            toolResult = { ok: true, result };
+          }
+          yield sse({ type: "tool_result", call_id: callId, name: call.name, ...toolResult });
+          toolOutcomes.push({ call_id: callId, name: call.name, ok: toolResult.ok });
+          messages.push({
+            role: "tool",
+            tool_call_id: callId,
+            content: JSON.stringify(toolResult),
+          });
+        } else {
+          // ---- no such tool in the bundle: refused, recorded -------------
+          const toolResult = toolFailure(
+            "unknown_tool",
+            `Tool ${call.name || "(unnamed)"} is not available to agent ${agent}.`,
+          );
+          yield sse({ type: "tool_result", call_id: callId, name: call.name, ...toolResult });
+          toolOutcomes.push({ call_id: callId, name: call.name, ok: false });
+          messages.push({
+            role: "tool",
+            tool_call_id: callId,
+            content: JSON.stringify(toolResult),
+          });
         }
-
-        yield sse({
-          type: "tool_result",
-          call_id: callId,
-          name: call.name,
-          ...toolResult,
-        });
-
-        toolOutcomes.push({
-          call_id: callId,
-          name: call.name,
-          ok: toolResult.ok,
-          ...(toolResult.ok ? { version: toolResult.result.version } : {}),
-        });
-        messages.push({
-          role: "tool",
-          tool_call_id: callId,
-          content: JSON.stringify(toolResult),
-        });
       }
 
-      for await (const ev of streamChat({ messages, maxTokens: 600 })) {
+      // final round: the model weaves the tool results into its reply
+      for await (const ev of streamChat({ messages, maxTokens: Math.min(600, maxTokens) })) {
         if (ev.text) {
           output += ev.text;
           yield sse({ type: "delta", text: ev.text });
+          const hits = scanOutput(output);
+          if (hits.length > 0) {
+            outputBlocks = [...outputBlocks, ...hits];
+            yield sse({
+              type: "guardrail_block",
+              phase: "output",
+              guardrails: hits,
+              message: "stream cut by guardrail — the phrase never completes",
+            });
+            break;
+          }
         }
         if (ev.tokensIn !== undefined) tokensIn += ev.tokensIn;
         if (ev.tokensOut !== undefined) tokensOut += ev.tokensOut;
@@ -361,6 +602,7 @@ export async function* streamRunEvents(
       ok,
       ...(version !== undefined ? { version } : {}),
     })),
+    ...(outputBlocks.length > 0 ? { guardrail_blocks: outputBlocks } : {}),
   };
   await store.insertRun(run);
   const ab = await store.abStats(agent);

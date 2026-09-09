@@ -104,6 +104,51 @@ export interface EvalRun {
   regression: boolean;
 }
 
+// ---- tools + guardrails (the agent config bundle) ---------------------------
+
+/**
+ * A tool this agent may call: a function definition with JSON-Schema
+ * parameters, served from the same store as the prompt. The runner exposes
+ * it to the model via function calling; arguments are checked against the
+ * schema's required fields before execution.
+ */
+export interface ToolDef {
+  name: string;
+  description: string;
+  /** JSON Schema (type: object) describing the arguments */
+  parameters: Record<string, unknown>;
+  /** which agents may call this tool; ["*"] = every agent */
+  agents: string[];
+  version: number;
+  updated_by: string;
+  updated_at: Date;
+}
+
+/**
+ * A policy enforced by the runner — stored next to the prompt it constrains,
+ * versioned like everything else. Three kinds, all enforced server-side:
+ *   input_block    — the run is refused before any LLM call (prompt injection)
+ *   banned_phrase  — the stream is cut when one appears in the output
+ *   max_tokens     — hard cap on completion tokens for this agent
+ */
+export interface Guardrail {
+  name: string;
+  description: string;
+  kind: "input_block" | "banned_phrase" | "max_tokens";
+  /** phrases/patterns for the two phrase kinds, a token count for max_tokens */
+  value: string[] | number;
+  agents: string[];
+  active: boolean;
+  updated_at: Date;
+}
+
+export interface ResolvedBundle {
+  prompt: ResolvedPrompt;
+  tools: ToolDef[];
+  guardrails: Guardrail[];
+  resolved_at: string;
+}
+
 export interface Run {
   ts: Date;
   agent: string;
@@ -118,4 +163,6 @@ export interface Run {
   tokens_out: number;
   verdict?: "up" | "down";
   tools?: { name: string; ok: boolean; version?: number }[];
+  /** guardrails that fired on this run (input refusals, output cuts) */
+  guardrail_blocks?: string[];
 }

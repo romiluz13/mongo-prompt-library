@@ -108,6 +108,10 @@ const RUNS_VALIDATOR = {
         bsonType: "array",
         items: { bsonType: "object" },
       },
+      guardrail_blocks: {
+        bsonType: "array",
+        items: { bsonType: "string" },
+      },
     },
   },
 };
@@ -166,6 +170,65 @@ const EVAL_RUNS_VALIDATOR = {
   },
 };
 
+const TOOLS_VALIDATOR = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: [
+      "name",
+      "description",
+      "parameters",
+      "agents",
+      "version",
+      "updated_by",
+      "updated_at",
+    ],
+    properties: {
+      name: { bsonType: "string", minLength: 1, pattern: "^[a-z][a-z0-9_]*$" },
+      description: { bsonType: "string", minLength: 1 },
+      parameters: {
+        bsonType: "object",
+        required: ["type"],
+        properties: {
+          type: { enum: ["object"] },
+        },
+      },
+      agents: {
+        bsonType: "array",
+        items: { bsonType: "string", minLength: 1 },
+        minItems: 1,
+      },
+      version: { bsonType: "int", minimum: 1 },
+      updated_by: { bsonType: "string" },
+      updated_at: { bsonType: "date" },
+    },
+  },
+};
+
+const GUARDRAILS_VALIDATOR = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: ["name", "description", "kind", "value", "agents", "active", "updated_at"],
+    properties: {
+      name: { bsonType: "string", minLength: 1 },
+      description: { bsonType: "string", minLength: 1 },
+      kind: { enum: ["input_block", "banned_phrase", "max_tokens"] },
+      value: {
+        bsonType: ["array", "int"],
+        properties: {
+          items: { bsonType: "string", minLength: 1 },
+        },
+      },
+      agents: {
+        bsonType: "array",
+        items: { bsonType: "string", minLength: 1 },
+        minItems: 1,
+      },
+      active: { bsonType: "bool" },
+      updated_at: { bsonType: "date" },
+    },
+  },
+};
+
 /** All collection contracts in one place; new collections join here. */
 const CONTRACTS: Record<string, object> = {
   prompts: PROMPTS_VALIDATOR,
@@ -174,6 +237,8 @@ const CONTRACTS: Record<string, object> = {
   runs: RUNS_VALIDATOR,
   eval_cases: EVAL_CASES_VALIDATOR,
   eval_runs: EVAL_RUNS_VALIDATOR,
+  tools: TOOLS_VALIDATOR,
+  guardrails: GUARDRAILS_VALIDATOR,
 };
 
 /**

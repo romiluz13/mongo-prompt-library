@@ -5,13 +5,19 @@ import {
   addFewShot,
   createVersion,
   deleteFewShot,
+  deleteGuardrail,
   deleteOverlay,
+  deleteTool,
   getActive,
+  guardrailsForAgent,
   listAgents,
   listFewShots,
+  listGuardrails,
   listOverlays,
+  listTools,
   listVersions,
   publish,
+  resolveBundle,
   resolvePrompt,
   reviewVersion,
   rollback,
@@ -19,7 +25,10 @@ import {
   stats,
   StoreError,
   submitForReview,
+  toolsForAgent,
+  upsertGuardrail,
   upsertOverlay,
+  upsertTool,
 } from "./library/store";
 import { seedIfEmpty } from "./library/seed";
 import {
@@ -159,12 +168,79 @@ route("POST", "/api/prompts/:agent/rollback", async ctx => {
   return json(await rollback(ctx.params.agent, version));
 });
 
-// resolve — what an agent runner actually calls
+// resolve — what an agent runner actually calls. ?bundle=1 adds the agent's
+// tools + active guardrails: the full config the runner executes with.
 route("GET", "/api/resolve/:agent", async ctx => {
   const url = new URL(ctx.url);
   const tenant = url.searchParams.get("tenant");
+  if (url.searchParams.get("bundle")) {
+    const bundle = await resolveBundle(ctx.params.agent, tenant);
+    return bundle ? json(bundle) : notFound(`agent '${ctx.params.agent}' not found`);
+  }
   const resolved = await resolvePrompt(ctx.params.agent, tenant);
   return resolved ? json(resolved) : notFound(`agent '${ctx.params.agent}' not found`);
+});
+
+// tools — the agent's callable functions, stored and versioned like prompts
+route("GET", "/api/tools", async () => json(await listTools()));
+
+route("GET", "/api/tools/:agent", async ctx => json(await toolsForAgent(ctx.params.agent)));
+
+route("POST", "/api/tools", async ctx => {
+  requireRole(ctx, ["editor"]);
+  const input = await body<{
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+    agents: string[];
+    updated_by?: string;
+  }>(ctx);
+  return json(
+    await upsertTool(
+      {
+        name: input.name,
+        description: input.description,
+        parameters: input.parameters,
+        agents: input.agents,
+      },
+      input.updated_by ?? "console@promptlib",
+    ),
+    201,
+  );
+});
+
+route("DELETE", "/api/tools/:name", async ctx => {
+  requireRole(ctx, ["editor"]);
+  await deleteTool(ctx.params.name);
+  return json({ ok: true });
+});
+
+// guardrails — server-enforced policy: input refusals, output cuts, token caps
+route("GET", "/api/guardrails", async () => json(await listGuardrails()));
+
+route("GET", "/api/guardrails/:agent", async ctx => json(await guardrailsForAgent(ctx.params.agent)));
+
+route("POST", "/api/guardrails", async ctx => {
+  requireRole(ctx, ["editor"]);
+  const input = await body<{
+    name: string;
+    description: string;
+    kind: "input_block" | "banned_phrase" | "max_tokens";
+    value: string[] | number;
+    agents: string[];
+    active: boolean;
+  }>(ctx);
+  if (!["input_block", "banned_phrase", "max_tokens"].includes(input.kind)) {
+    throw new StoreError("kind must be input_block, banned_phrase, or max_tokens", 400);
+  }
+  await upsertGuardrail(input);
+  return json({ ok: true, ...input }, 201);
+});
+
+route("DELETE", "/api/guardrails/:name", async ctx => {
+  requireRole(ctx, ["editor"]);
+  await deleteGuardrail(ctx.params.name);
+  return json({ ok: true });
 });
 
 // overlays
