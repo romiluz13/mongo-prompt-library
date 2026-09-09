@@ -214,6 +214,11 @@ through the configured gateway. Slice 7 verified in the browser.
       browser-verified end-to-end (screenshots in .ddd/landing.png and
       .ddd/console-tabs.png)
 
-All 7 slices done. Remaining deployment of the new surface: the Railway
-service rebuilds from the Dockerfile on push — verify the landing at
-https://promptlib-production.up.railway.app/ after this push.
+All 7 slices done. Deployment note (2026-09-10): the Railway service is NOT
+repo-connected (source.repo = null) — pushes never trigger deploys. The new
+surface shipped via `railway up` from the clean working tree (with a
+`.railwayignore` excluding .git/node_modules/export/.ddd). Verified live on
+https://promptlib-production.up.railway.app/ ~30s after up: landing at /
+(agent platform store title), console at /console.html, healthz ok, /api/stats
+(12 prompts / 19 runs), /api/route routing "pr with sql injection" →
+code-reviewer 0.654.
