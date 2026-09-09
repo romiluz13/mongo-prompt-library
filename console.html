@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prompt Library — MongoDB as the prompt layer for agents</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel2: #1c2128; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --green: #00ed64; --teal: #39d2c0;
+    --blue: #58a6ff; --amber: #d29922; --red: #f85149; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  a { color: var(--blue); }
+  button { font: inherit; cursor: pointer; border-radius: 6px; border: 1px solid var(--border); background: var(--panel2); color: var(--text); padding: 5px 12px; }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--green); color: #05220f; border-color: var(--green); font-weight: 600; }
+  button.primary:hover { filter: brightness(1.1); }
+  button.small { padding: 2px 8px; font-size: 12px; }
+  button.danger { color: var(--red); }
+  input, textarea, select { font: inherit; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; }
+  textarea { width: 100%; resize: vertical; font-family: var(--mono); font-size: 13px; }
+  code, pre { font-family: var(--mono); font-size: 12.5px; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px 80px; }
+  header { display: flex; align-items: center; gap: 14px; padding: 18px 0 10px; flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; letter-spacing: -0.3px; }
+  header h1 .leaf { color: var(--green); }
+  .tagline { color: var(--muted); font-size: 12.5px; }
+  .live { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); margin-left: auto; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.on { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .dot.flash { background: var(--teal); box-shadow: 0 0 8px var(--teal); }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
+  .chip { background: var(--panel); border: 1px solid var(--border); border-radius: 999px; padding: 3px 12px; font-size: 12px; color: var(--muted); }
+  .chip b { color: var(--text); }
+  section { margin: 26px 0; }
+  h2 { font-size: 15px; margin: 0 0 4px; letter-spacing: -0.2px; }
+  .sub { color: var(--muted); font-size: 12.5px; margin: 0 0 14px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  /* routing hero */
+  .route-box { display: flex; gap: 8px; }
+  .route-box input { flex: 1; font-size: 15px; padding: 10px 14px; }
+  .match { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .match:last-child { border-bottom: 0; }
+  .score-bar { flex: 0 0 140px; height: 6px; background: var(--bg); border-radius: 4px; overflow: hidden; }
+  .score-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--teal), var(--green)); }
+  .match .name { font-weight: 600; min-width: 150px; }
+  .match .score { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+  /* agent grid */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+  .agent-card { cursor: pointer; transition: border-color .15s; }
+  .agent-card:hover { border-color: var(--green); }
+  .agent-card h3 { margin: 0 0 6px; font-size: 14px; font-family: var(--mono); color: var(--green); }
+  .agent-card .changelog { color: var(--muted); font-size: 12.5px; margin-bottom: 10px; }
+  .meta { display: flex; gap: 14px; color: var(--muted); font-size: 12px; flex-wrap: wrap; }
+  .meta b { color: var(--text); }
+  /* detail */
+  .detail { border: 1px solid var(--border); border-radius: 10px; background: var(--panel); overflow: hidden; }
+  .detail-head { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .detail-head h3 { margin: 0; font-family: var(--mono); font-size: 15px; color: var(--green); }
+  .detail-cols { display: grid; grid-template-columns: 1.2fr 1fr; gap: 0; }
+  @media (max-width: 860px) { .detail-cols { grid-template-columns: 1fr; } }
+  .detail-col { padding: 16px; border-right: 1px solid var(--border); }
+  .detail-col:last-child { border-right: 0; }
+  h4 { margin: 18px 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); }
+  .detail-col h4:first-child { margin-top: 0; }
+  /* composer */
+  .composer textarea { min-height: 84px; }
+  .composer-row { display: flex; gap: 8px; margin: 8px 0; flex-wrap: wrap; align-items: center; }
+  .composer-row input, .composer-row select { width: auto; flex: 0 1 auto; font-size: 13px; padding: 4px 8px; }
+  label.inline { display: flex; align-items: center; gap: 5px; font-size: 13px; color: var(--muted); }
+  .output { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-top: 10px; min-height: 40px; white-space: pre-wrap; font-family: var(--mono); font-size: 12.5px; max-height: 340px; overflow-y: auto; }
+  .output .cursor { display: inline-block; width: 7px; background: var(--green); animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .run-meta { font-size: 11.5px; color: var(--muted); margin-top: 6px; font-family: var(--mono); }
+  .verdict-row { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+  .verdict-row .note { color: var(--muted); font-size: 12px; }
+  button.up { color: var(--green); border-color: var(--green); }
+  button.down { color: var(--red); border-color: var(--red); }
+  /* versions timeline */
+  .version { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; background: var(--panel2); }
+  .version .vhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .vnum { font-family: var(--mono); font-weight: 700; }
+  .badge { font-size: 10.5px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .badge.active { color: var(--green); border-color: var(--green); }
+  .badge.archived { color: var(--muted); }
+  .version .cl { color: var(--muted); font-size: 12.5px; margin: 4px 0 6px; }
+  .version pre { display: none; background: var(--bg); border-radius: 6px; padding: 10px; margin: 0; max-height: 260px; overflow-y: auto; white-space: pre-wrap; }
+  .version pre.open { display: block; }
+  .version .who { color: var(--muted); font-size: 11.5px; font-family: var(--mono); }
+  /* ab */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; font-size: 11.5px; text-transform: uppercase; letter-spacing: .5px; padding: 4px 8px 4px 0; }
+  td { padding: 5px 8px 5px 0; border-top: 1px solid var(--border); font-family: var(--mono); font-size: 12.5px; }
+  .split-row { display: flex; gap: 6px; align-items: center; margin-top: 8px; }
+  .split-row input { width: 60px; }
+  /* overlays + few-shots */
+  .overlay { border: 1px dashed var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+  .overlay .tenant { font-family: var(--mono); color: var(--teal); font-weight: 700; }
+  .overlay pre { background: var(--bg); padding: 8px; border-radius: 6px; margin: 6px 0; font-size: 12px; white-space: pre-wrap; }
+  .fewshot { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; font-size: 12.5px; }
+  .fewshot .fshead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+  .fewshot .score { color: var(--teal); font-family: var(--mono); font-size: 11.5px; }
+  .add-form { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .add-form input, .add-form textarea { flex: 1; min-width: 160px; }
+  .empty { color: var(--muted); font-size: 12.5px; font-style: italic; }
+  .flash-note { color: var(--teal); font-size: 12px; }
+  .err { color: var(--red); font-size: 12.5px; }
+  .spin { display: inline-block; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1><span class="leaf">◉</span> Prompt Library</h1>
+    <span class="tagline">MongoDB as the prompt layer for agents — versioned · A/B · tenant overlays · semantic</span>
+    <div class="live"><span class="dot" id="livedot"></span><span id="livelabel">connecting…</span></div>
+  </header>
+  <div class="chips" id="chips"></div>
+
+  <section>
+    <h2>Describe what you need</h2>
+    <p class="sub">Plain language in, the right agent out — Vector Search ranks every agent's active prompt against your request.</p>
+    <div class="card">
+      <div class="route-box">
+        <input id="routeQ" placeholder="e.g. a customer is furious, their API is down, they're losing orders" />
+        <button class="primary" id="routeBtn">Find my agent</button>
+      </div>
+      <div id="routeResults" style="margin-top: 10px;"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Agent gallery</h2>
+    <p class="sub">Every prompt is a versioned document: base body, macros, A/B variants, tenant overlays, few-shots. Click an agent to open it.</p>
+    <div class="grid" id="agents"></div>
+  </section>
+
+  <section>
+    <h2>Prompt ops analytics</h2>
+    <p class="sub">One aggregation pass: runs, human verdicts, latency percentiles, tokens — per agent, live.</p>
+    <div class="card" style="overflow-x:auto"><table id="analytics"></table></div>
+  </section>
+
+  <section id="detailSection" style="display:none">
+    <div class="detail" id="detail"></div>
+  </section>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmtDate = (d) => new Date(d).toLocaleString(undefined, {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+let currentAgent = null;
+
+// ---------- header chips ----------
+async function loadStats() {
+  try {
+    const s = await api("/api/stats");
+    $("chips").innerHTML =
+      `<span class="chip"><b>${esc(s.db)}</b> database</span>` +
+      `<span class="chip"><b>${s.runs}</b> runs</span>` +
+      `<span class="chip"><b>${s.prompts}</b> prompt versions</span>` +
+      `<span class="chip"><b>${s.overlays}</b> tenant overlays</span>` +
+      `<span class="chip"><b>${s.few_shots}</b> few-shots</span>`;
+  } catch {}
+}
+
+// ---------- routing hero ----------
+async function doRoute() {
+  const q = $("routeQ").value.trim();
+  if (!q) return;
+  $("routeBtn").disabled = true;
+  $("routeResults").innerHTML = `<span class="sub">searching…</span>`;
+  try {
+    const d = await api("/api/route?q=" + encodeURIComponent(q));
+    const max = d.matches[0]?.score || 1;
+    $("routeResults").innerHTML = d.matches.map(m => `
+      <div class="match">
+        <span class="name">${esc(m.agent)}</span>
+        <span class="score-bar"><i style="width:${Math.round((m.score/max)*100)}%"></i></span>
+        <span class="score">${m.score.toFixed(3)}</span>
+        <span class="sub" style="flex:1">active v${m.version}</span>
+        <button class="small" onclick="openAgent('${esc(m.agent)}')">Open agent</button>
+        <button class="small primary" onclick="prefillRun('${esc(m.agent)}')">Run it →</button>
+      </div>`).join("") || `<span class="empty">no agents matched</span>`;
+  } catch (e) {
+    $("routeResults").innerHTML = `<span class="err">${esc(e.message)}</span>`;
+  } finally {
+    $("routeBtn").disabled = false;
+  }
+}
+$("routeBtn").onclick = doRoute;
+$("routeQ").addEventListener("keydown", e => { if (e.key === "Enter") doRoute(); });
+
+// ---------- agent gallery ----------
+async function loadAgents() {
+  const agents = await api("/api/agents");
+  const cards = await Promise.all(agents.map(async a => {
+    const active = await api(`/api/prompts/${a.agent}/active`).catch(() => null);
+    return `
+    <div class="card agent-card" onclick="openAgent('${esc(a.agent)}')">
+      <h3>${esc(a.agent)}</h3>
+      <div class="changelog">${esc(active?.changelog ?? "")}</div>
+      <div class="meta">
+        <span>version <b>${a.active_version ?? "—"}</b> of <b>${a.versions}</b></span>
+        <span>variants <b>${active?.variants?.length ?? 0}</b></span>
+      </div>
+    </div>`;
+  }));
+  $("agents").innerHTML = cards.join("");
+}
+
+// ---------- analytics ----------
+async function loadAnalytics() {
+  const d = await api("/api/analytics");
+  $("analytics").innerHTML =
+    `<tr><th>agent</th><th>versions</th><th>overlays</th><th>few-shots</th><th>runs</th><th>wins</th><th>win rate</th><th>avg latency</th><th>p95 latency</th><th>tokens in/out</th></tr>` +
+    d.agents.map(a => `
+      <tr>
+        <td><a href="#" onclick="openAgent('${esc(a.agent)}');return false">${esc(a.agent)}</a></td>
+        <td>${a.versions}</td><td>${a.overlays}</td><td>${a.few_shots}</td>
+        <td>${a.runs}</td><td>${a.wins}</td>
+        <td>${a.win_rate == null ? "—" : (a.win_rate*100).toFixed(0) + "%"}</td>
+        <td>${a.avg_latency_ms == null ? "—" : a.avg_latency_ms + "ms"}</td>
+        <td>${a.p95_latency_ms == null ? "—" : a.p95_latency_ms + "ms"}</td>
+        <td>${a.tokens_in}/${a.tokens_out}</td>
+      </tr>`).join("");
+}
+
+// ---------- agent detail ----------
+async function openAgent(agent) {
+  currentAgent = agent;
+  $("detailSection").style.display = "";
+  $("detailSection").scrollIntoView({ behavior: "smooth", block: "start" });
+  await renderDetail();
+  // last run id cached for verdict buttons
+  lastRunId = null;
+}
+
+async function renderDetail() {
+  if (!currentAgent) return;
+  const agent = currentAgent;
+  const [active, versions, overlays, fewshots, ab, runs] = await Promise.all([
+    api(`/api/prompts/${agent}/active`).catch(() => null),
+    api(`/api/prompts/${agent}/versions`),
+    api(`/api/overlays/${agent}`),
+    api(`/api/fewshots/${agent}`),
+    api(`/api/ab/${agent}`),
+    api(`/api/runs?agent=${agent}&k=10`).catch(() => []),
+  ]);
+  if (currentAgent !== agent) return; // switched mid-flight
+  const variants = active?.variants ?? [];
+
+  // preserve composer state across live re-renders (change stream refreshes
+  // shouldn't wipe a typed input, streamed output, or a pending verdict row)
+  const prev = {
+    input: $("runInput")?.value ?? "",
+    tenant: $("runTenant")?.value ?? "",
+    variant: $("runVariant")?.value ?? "",
+    chat: $("runChat")?.checked ?? false,
+    outputHTML: $("runOutput")?.innerHTML ?? "",
+    meta: $("runMeta")?.textContent ?? "",
+    verdictHTML: $("verdictRow")?.innerHTML ?? "",
+    verdictShown: !!$("verdictRow") && $("verdictRow").style.display !== "none",
+    running: $("runBtn")?.disabled ?? false,
+  };
+
+  $("detail").innerHTML = `
+  <div class="detail-head">
+    <h3>${esc(agent)}</h3>
+    <span class="sub">active v${active?.version ?? "—"} · ${esc(active?.changelog ?? "no versions yet")}</span>
+    <button class="small" style="margin-left:auto" onclick="$('detailSection').style.display='none'">close</button>
+  </div>
+  <div class="detail-cols">
+    <div class="detail-col">
+      <h4>Run this agent</h4>
+      <div class="composer">
+        <textarea id="runInput" placeholder="input for the agent (a ticket, a PR description, a brief request…)"></textarea>
+        <div class="composer-row">
+          <input id="runTenant" placeholder="tenant (optional)" />
+          <select id="runVariant">
+            <option value="">variant: auto (by weight)</option>
+            ${variants.map(v => `<option value="${esc(v.id)}">variant: ${esc(v.id)} — ${esc(v.label)} (${v.weight}%)</option>`).join("")}
+          </select>
+          <label class="inline"><input type="checkbox" id="runChat" /> chat mode (may edit its own prompt)</label>
+          <button class="primary" id="runBtn" onclick="doRun()">Run <span class="spin" id="runSpin" style="display:none">◌</span></button>
+        </div>
+        <div class="output" id="runOutput"><span class="empty">output streams here…</span></div>
+        <div class="run-meta" id="runMeta"></div>
+        <div class="verdict-row" id="verdictRow" style="display:none">
+          <span class="note">Was this reply good?</span>
+          <button class="small up" onclick="doVerdict('up')">👍 up</button>
+          <button class="small down" onclick="doVerdict('down')">👎 down</button>
+        </div>
+      </div>
+
+      <h4>Recent runs</h4>
+      ${runs.length === 0 ? `<div class="empty">no runs yet</div>` : `
+      <table>
+        <tr><th>when</th><th>variant</th><th>tenant</th><th>latency</th><th>verdict</th><th></th></tr>
+        ${runs.map(r => `
+          <tr>
+            <td>${fmtDate(r.ts)}</td>
+            <td>${esc(r.variant ?? "—")}</td>
+            <td>${esc(r.tenant ?? "—")}</td>
+            <td>${r.latency_ms}ms</td>
+            <td>${r.verdict ? (r.verdict === "up" ? "👍" : "👎") : "—"}</td>
+            <td><span class="sub" title="${esc((r.input||"").slice(0,120))}">${esc((r.input||"").slice(0,34))}…</span></td>
+          </tr>`).join("")}
+      </table>`}
+    </div>
+
+    <div class="detail-col">
+      <h4>Version history <span class="sub">(immutable — rollback is one write)</span></h4>
+      ${versions.map(v => `
+        <div class="version" id="ver-${v.version}">
+          <div class="vhead">
+            <span class="vnum">v${v.version}</span>
+            <span class="badge ${v.status}">${v.status}</span>
+            <span class="who">${esc(v.updated_by)} · ${fmtDate(v.updated_at)}</span>
+            <span style="margin-left:auto; display:flex; gap:6px">
+              <button class="small" onclick="toggleBody(${v.version})">${variants.length ? "view body" : "view"}</button>
+              ${v.status !== "active" ? `<button class="small" onclick="doRollback(${v.version})">rollback to v${v.version}</button>` : ""}
+            </span>
+          </div>
+          <div class="cl">${esc(v.changelog)}</div>
+          <pre id="body-${v.version}">${esc(v.body)}</pre>
+        </div>`).join("")}
+
+      <h4>A/B traffic split</h4>
+      ${variants.length === 0 ? `<div class="empty">no variants on this agent</div>` : `
+        <table>
+          <tr><th>variant</th><th>weight</th><th>runs</th><th>wins (👍)</th></tr>
+          ${variants.map(v => {
+            const st = ab.find(s => s.variant === v.id);
+            return `<tr><td>${esc(v.id)} — ${esc(v.label)}</td><td>${v.weight}%</td><td>${st?.runs ?? 0}</td><td>${st?.wins ?? 0}</td></tr>`;
+          }).join("")}
+        </table>
+        <div class="split-row">
+          <input id="splitA" type="number" value="${variants[0]?.weight ?? 50}" /> /
+          <input id="splitB" type="number" value="${variants[1]?.weight ?? 50}" /> %
+          <button class="small" onclick="doSplit()">set split</button>
+        </div>`}
+
+      <h4>Tenant overlays</h4>
+      ${overlays.length === 0 ? `<div class="empty">no overlays — every tenant gets the base prompt</div>` : ""}
+      ${overlays.map(o => `
+        <div class="overlay">
+          <div class="fshead">
+            <span class="tenant">${esc(o.tenant)}</span>
+            <button class="small danger" onclick="doDeleteOverlay('${esc(o.tenant)}')">remove</button>
+          </div>
+          ${o.patch.body_append ? `<pre>${esc(o.patch.body_append)}</pre>` : ""}
+          ${o.patch.macros ? `<code>${esc(JSON.stringify(o.patch.macros))}</code>` : ""}
+        </div>`).join("")}
+      <div class="add-form">
+        <input id="ovTenant" placeholder="tenant" style="flex:0 1 100px" />
+        <input id="ovAppend" placeholder="body_append (tenant rules…)" />
+        <button class="small" onclick="doAddOverlay()">add overlay</button>
+      </div>
+
+      <h4>Few-shots <span class="sub">(retrieved semantically per run)</span></h4>
+      ${fewshots.length === 0 ? `<div class="empty">no few-shots</div>` : ""}
+      ${fewshots.map(f => `
+        <div class="fewshot">
+          <div class="fshead">
+            <span class="score">${esc(f.note ?? "example")}</span>
+            <button class="small danger" onclick="doDeleteFewShot('${f._id}')">remove</button>
+          </div>
+          ${esc(f.text)}
+        </div>`).join("")}
+      <div class="add-form">
+        <input id="fsText" placeholder="a new few-shot example (input → ideal handling)" />
+        <button class="small" onclick="doAddFewShot()">add</button>
+      </div>
+    </div>
+  </div>`;
+
+  // restore composer state captured before the rebuild
+  if (prev.input) $("runInput").value = prev.input;
+  if (prev.tenant) $("runTenant").value = prev.tenant;
+  if (prev.variant) $("runVariant").value = prev.variant;
+  $("runChat").checked = prev.chat;
+  if (!prev.outputHTML.includes('class="empty"')) {
+    $("runOutput").innerHTML = prev.outputHTML;
+    $("runMeta").textContent = prev.meta;
+    if (prev.verdictShown) {
+      $("verdictRow").style.display = "";
+      $("verdictRow").innerHTML = prev.verdictHTML;
+    }
+  }
+  if (prev.running) { $("runBtn").disabled = true; $("runSpin").style.display = ""; }
+}
+
+function toggleBody(version) {
+  const el = $("body-" + version);
+  el.classList.toggle("open");
+}
+
+async function doRollback(version) {
+  if (!confirm(`Rollback ${currentAgent} to v${version}? One write, no deploy.`)) return;
+  try {
+    await api(`/api/prompts/${currentAgent}/rollback`, { method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify({ version }) });
+  } catch (e) { alert(e.message); }
+}
+
+async function doSplit() {
+  try {
+    await api(`/api/ab/${currentAgent}/split`, { method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify({ a: Number($("splitA").value), b: Number($("splitB").value) }) });
+  } catch (e) { alert(e.message); }
+}
+
+async function doAddOverlay() {
+  const tenant = $("ovTenant").value.trim();
+  const append = $("ovAppend").value.trim();
+  if (!tenant) return alert("tenant is required");
+  try {
+    await api(`/api/overlays/${currentAgent}/${tenant}`, { method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify({ body_append: append || undefined }) });
+  } catch (e) { alert(e.message); }
+}
+
+async function doDeleteOverlay(tenant) {
+  if (!confirm(`Remove the ${tenant} overlay? They fall back to the base prompt.`)) return;
+  try { await api(`/api/overlays/${currentAgent}/${tenant}`, { method: "DELETE" }); } catch (e) { alert(e.message); }
+}
+
+async function doAddFewShot() {
+  const text = $("fsText").value.trim();
+  if (!text) return;
+  try {
+    await api(`/api/fewshots/${currentAgent}`, { method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify({ text }) });
+  } catch (e) { alert(e.message); }
+}
+
+async function doDeleteFewShot(id) {
+  try { await api(`/api/fewshots/${id}`, { method: "DELETE" }); } catch (e) { alert(e.message); }
+}
+
+// ---------- run executor (SSE) ----------
+let lastRunId = null;
+// suppress detail re-renders while a run streams AND briefly after: the run's
+// own writes (run record, new prompt version) land in the change stream with
+// ~1s latency and would otherwise wipe the output + verdict row.
+let suppressDetailUntil = 0;
+
+async function prefillRun(agent) {
+  await openAgent(agent);
+  const q = $("routeQ").value.trim();
+  if (q) $("runInput").value = q;
+  $("runInput").focus();
+}
+
+async function doRun() {
+  const agent = currentAgent;
+  const input = $("runInput").value.trim();
+  if (!input) return alert("input is required");
+  $("runBtn").disabled = true; $("runSpin").style.display = "";
+  suppressDetailUntil = Infinity;
+  $("runOutput").textContent = "";
+  $("runMeta").textContent = "";
+  $("verdictRow").style.display = "none";
+  lastRunId = null;
+
+  const payload = { input };
+  const tenant = $("runTenant").value.trim(); if (tenant) payload.tenant = tenant;
+  const variant = $("runVariant").value; if (variant) payload.variant = variant;
+  if ($("runChat").checked) payload.chat = true;
+
+  try {
+    const res = await fetch(`/api/runs/${agent}`, { method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify(payload) });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    const out = $("runOutput");
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+        if (!line.startsWith("data:")) continue;
+        const ev = JSON.parse(line.slice(5));
+        if (ev.type === "start") {
+          out.innerHTML = `<span class="run-meta">v${ev.version} · variant ${ev.variant ?? "—"} · ${esc(ev.model)}${ev.tenant ? " · tenant " + esc(ev.tenant) : ""}${ev.few_shots ? " · few-shots ✓" : ""}</span>\n`;
+          out.insertAdjacentHTML("beforeend", `<span id="streamtext"></span><span class="cursor"> </span>`);
+        } else if (ev.type === "delta") {
+          const st = $("streamtext");
+          if (st) st.textContent += ev.text;
+          out.scrollTop = out.scrollHeight;
+        } else if (ev.type === "tool_call") {
+          out.insertAdjacentHTML("beforeend", `\n<span class="flash-note">⟳ tool ${esc(ev.name)} → writing v${"" }prompt version…</span>\n`);
+        } else if (ev.type === "tool_result") {
+          out.insertAdjacentHTML("beforeend", ev.ok
+            ? `<span class="flash-note">✓ new version v${ev.result.version} is live (${esc(ev.result.changelog)})</span>\n`
+            : `<span class="err">✗ ${esc(ev.error.message)}</span>\n`);
+        } else if (ev.type === "done") {
+          document.querySelector(".cursor")?.remove();
+          $("runMeta").textContent =
+            `latency ${ev.run.latency_ms}ms · tokens ${ev.run.tokens_in}/${ev.run.tokens_out} · recorded to runs`;
+          // find our run id in the recent list (freshest for this agent)
+          try {
+            const runs = await api(`/api/runs?agent=${agent}&k=1`);
+            lastRunId = runs[0]?._id ?? null;
+          } catch {}
+          if (lastRunId) $("verdictRow").style.display = "";
+        } else if (ev.type === "error") {
+          document.querySelector(".cursor")?.remove();
+          out.insertAdjacentHTML("beforeend", `\n<span class="err">error: ${esc(ev.error)}</span>\n`);
+        }
+      }
+    }
+  } catch (e) {
+    $("runOutput").insertAdjacentHTML("beforeend", `<span class="err">${esc(e.message)}</span>`);
+  } finally {
+    $("runBtn").disabled = false; $("runSpin").style.display = "none";
+    suppressDetailUntil = Date.now() + 5000;
+  }
+}
+
+async function doVerdict(v) {
+  if (!lastRunId) return;
+  try {
+    await api("/api/verdict", { method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify({ run_id: lastRunId, verdict: v }) });
+    $("verdictRow").innerHTML = `<span class="flash-note">verdict recorded — the A/B stats updated</span>`;
+  } catch (e) { alert(e.message); }
+}
+
+// ---------- change stream (live) ----------
+function connectStream() {
+  const es = new EventSource("/api/stream");
+  es.onopen = () => { $("livedot").className = "dot on"; $("livelabel").textContent = "live (change stream)"; };
+  es.onerror = () => { $("livedot").className = "dot"; $("livelabel").textContent = "reconnecting…"; };
+  es.onmessage = (m) => {
+    let ev; try { ev = JSON.parse(m.data); } catch { return; }
+    if (ev.type !== "change") return;
+    $("livedot").className = "dot flash";
+    setTimeout(() => { $("livedot").className = "dot on"; }, 350);
+    // refresh whatever the change touched (cheap refetches; small library).
+    // Skip re-rendering the detail panel while a run streams (and for a few
+    // seconds after) — the run's own insert events would otherwise wipe the
+    // streaming output and verdict row.
+    loadStats(); loadAnalytics(); loadAgents();
+    if (currentAgent && Date.now() >= suppressDetailUntil) renderDetail();
+  };
+}
+
+// ---------- boot ----------
+loadStats(); loadAgents(); loadAnalytics(); connectStream();
+</script>
+</body>
+</html>
