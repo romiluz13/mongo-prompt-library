@@ -31,6 +31,7 @@ import {
 } from "./library/eval";
 import { ensureSemanticIndexes, routeAgent, semanticFewShots } from "./library/semantic";
 import { ensureSearchIndex, searchPrompts } from "./library/search";
+import { hybridSearch } from "./library/hybrid";
 import { streamRunEvents } from "./library/run";
 import { openChangeFeed } from "./library/watch";
 import { ensureValidators } from "./library/validators";
@@ -332,8 +333,45 @@ route("GET", "/api/route", async ctx => {
   });
 });
 
-function round(n: number): number {
-  return Math.round(n * 1000) / 1000;
+function round(n: number, places = 3): number {
+  const f = 10 ** places;
+  return Math.round(n * f) / f;
+}
+
+// hybrid — $rankFusion fuses vector + full-text in one server-side stage,
+// with per-pipeline score attribution for every hit
+route("GET", "/api/search/hybrid", async ctx => {
+  const url = new URL(ctx.url);
+  const q = url.searchParams.get("q") ?? "";
+  if (!q.trim()) return json({ error: "query param q is required" }, 400);
+  const vecWeight = clamp01(url.searchParams.get("wvec"));
+  const hits = await hybridSearch(q, {
+    agent: url.searchParams.get("agent") ?? undefined,
+    status: url.searchParams.get("status") ?? undefined,
+    k: Number(url.searchParams.get("k") ?? 10),
+    vecWeight,
+    ftsWeight: 1 - vecWeight,
+  });
+  return json({
+    query: q,
+    weights: { vec: vecWeight, fts: round(1 - vecWeight, 3) },
+    hits: hits.map(h => ({
+      agent: h.doc.agent,
+      version: h.doc.version,
+      status: h.doc.status,
+      changelog: h.doc.changelog,
+      score: round(h.score, 5),
+      vec: h.vec ? { rank: h.vec.rank, value: round(h.vec.value, 3) } : null,
+      fts: h.fts ? { rank: h.fts.rank, value: round(h.fts.value, 3) } : null,
+      snippet: h.doc.body.slice(0, 160),
+    })),
+  });
+});
+
+function clamp01(raw: string | null): number {
+  const n = Number(raw ?? 0.6);
+  if (!Number.isFinite(n) || n < 0) return 0.6;
+  return Math.min(n, 1);
 }
 
 // full-text — Atlas Search across every version

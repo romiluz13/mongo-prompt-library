@@ -109,7 +109,20 @@ through the configured gateway. Slice 7 verified in the browser.
       columns, regression flags) + case management (browser-verified);
       eval route needed `server.timeout(ctx, 0)` (Bun's 10s idle timeout
       killed long LLM suites)
-- [ ] Slice 4 — hybrid search
+- [x] Slice 4 — hybrid search VERIFIED live on Atlas: new
+      `src/library/hybrid.ts` fuses an autoEmbed `$vectorSearch` pipeline
+      (meaning) with a `$search` full-text pipeline (words) in one
+      server-side `$rankFusion` stage — `combination.weights` is a SIBLING
+      of `input` (nesting it inside `input` is an unknown-field error),
+      the fused RRF score surfaces via `$meta: "score"`, per-pipeline
+      attribution via `$meta: "scoreDetails"` (probed live:
+      `details[].{inputPipelineName, rank, value}` with raw cosine ~0.6
+      and searchScore ~2.2); `GET /api/search/hybrid` with
+      `q/k/agent/status/wvec` params (wvec=0 pure lexical, wvec=1 pure
+      semantic, post-fusion `$match` filters apply cleanly); console has a
+      hybrid search panel with a semantic↔lexical weight slider and
+      per-hit attribution bars (browser-verified: slider at 54% re-weighted
+      bars to 54/46; API extremes verified at 0 and 1)
 - [ ] Slice 5 — tools + guardrails bundle
 - [ ] Slice 6 — observability + alerting
 - [ ] Slice 7 — showcase surface + deploy + README

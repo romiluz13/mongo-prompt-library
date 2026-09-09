@@ -47,6 +47,18 @@
   .score-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--teal), var(--green)); }
   .match .name { font-weight: 600; min-width: 150px; }
   .match .score { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+  /* hybrid search attribution */
+  .hyb { padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .hyb:last-child { border-bottom: 0; }
+  .hyb .hhead { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .hyb .name { font-weight: 600; font-family: var(--mono); }
+  .hyb .snippet { color: var(--muted); font-size: 12px; margin: 4px 0 6px; }
+  .attr { display: flex; align-items: center; gap: 10px; }
+  .attr-bar { flex: 0 0 260px; height: 8px; background: var(--bg); border-radius: 4px; display: flex; overflow: hidden; }
+  .attr-bar i.vec { background: var(--teal); }
+  .attr-bar i.fts { background: var(--green); }
+  .attr .lbl { font-size: 10.5px; color: var(--muted); font-family: var(--mono); white-space: nowrap; }
+  .attr .pct { font-family: var(--mono); font-size: 11px; color: var(--muted); }
   /* agent grid */
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
   .agent-card { cursor: pointer; transition: border-color .15s; }
@@ -142,6 +154,23 @@
   </section>
 
   <section>
+    <h2>Hybrid search — one $rankFusion stage, two retrievers</h2>
+    <p class="sub">Vector Search (meaning) + Atlas Search (words) fused server-side by Reciprocal Rank Fusion. Every hit shows how each retriever contributed.</p>
+    <div class="card">
+      <div class="route-box">
+        <input id="hybQ" placeholder="e.g. refund policy for a angry customer charged twice" />
+        <button class="primary" id="hybBtn">Fuse it</button>
+      </div>
+      <div class="composer-row" style="margin-top:10px">
+        <label class="inline">semantic ←→ lexical</label>
+        <input type="range" id="hybW" min="0" max="100" value="60" style="flex:1" oninput="$('hybWv').textContent = this.value + '% semantic'">
+        <span class="sub" id="hybWv" style="margin:0">60% semantic</span>
+      </div>
+      <div id="hybResults" style="margin-top: 10px;"></div>
+    </div>
+  </section>
+
+  <section>
     <h2>Agent gallery</h2>
     <p class="sub">Every prompt is a versioned document: base body, macros, A/B variants, tenant overlays, few-shots. Click an agent to open it.</p>
     <div class="grid" id="agents"></div>
@@ -221,6 +250,50 @@ async function doRoute() {
 }
 $("routeBtn").onclick = doRoute;
 $("routeQ").addEventListener("keydown", e => { if (e.key === "Enter") doRoute(); });
+
+// ---------- hybrid search ($rankFusion) ----------
+async function doHybrid() {
+  const q = $("hybQ").value.trim();
+  if (!q) return;
+  $("hybBtn").disabled = true;
+  $("hybResults").innerHTML = `<span class="sub">fusing vector + full-text in one $rankFusion stage…</span>`;
+  try {
+    const wvec = Number($("hybW").value) / 100;
+    const d = await api("/api/search/hybrid?q=" + encodeURIComponent(q) + "&wvec=" + wvec);
+    $("hybResults").innerHTML = d.hits.map(h => {
+      // each retriever's RRF contribution: weight * 1/(60+rank); absent → 0
+      const cVec = h.vec ? d.weights.vec * (1 / (60 + h.vec.rank)) : 0;
+      const cFts = h.fts ? d.weights.fts * (1 / (60 + h.fts.rank)) : 0;
+      const total = cVec + cFts || 1;
+      const pVec = Math.round((cVec / total) * 100);
+      const pFts = 100 - pVec;
+      return `
+      <div class="hyb">
+        <div class="hhead">
+          <span class="name">${esc(h.agent)}</span>
+          <span class="badge ${esc(h.status)}">${esc(h.status)}</span>
+          <span class="sub" style="margin:0">v${h.version}</span>
+          <span class="score">fusion ${h.score.toFixed(4)}</span>
+          <span class="sub" style="margin:0;flex:1">${esc(h.changelog ?? "")}</span>
+          <button class="small" onclick="openAgent('${esc(h.agent)}')">Open agent</button>
+        </div>
+        <div class="snippet">${esc(h.snippet)}…</div>
+        <div class="attr">
+          <span class="lbl">semantic</span>
+          <div class="attr-bar"><i class="vec" style="width:${pVec}%"></i><i class="fts" style="width:${pFts}%"></i></div>
+          <span class="lbl">lexical</span>
+          <span class="pct">${pVec}% / ${pFts}%</span>
+        </div>
+      </div>`;
+    }).join("") || `<span class="empty">no hits — try a broader query</span>`;
+  } catch (e) {
+    $("hybResults").innerHTML = `<span class="err">${esc(e.message)}</span>`;
+  } finally {
+    $("hybBtn").disabled = false;
+  }
+}
+$("hybBtn").onclick = doHybrid;
+$("hybQ").addEventListener("keydown", e => { if (e.key === "Enter") doHybrid(); });
 
 // ---------- agent gallery ----------
 async function loadAgents() {
