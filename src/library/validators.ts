@@ -1,0 +1,133 @@
+import { db } from "./db";
+
+/**
+ * Database-enforced contracts for every collection: $jsonSchema validators
+ * applied at boot (idempotent collMod). The database itself rejects malformed
+ * writes — code 121 — which the API surfaces as a clean 400.
+ *
+ * validationLevel "moderate": inserts and updates of conforming documents are
+ * validated; any legacy document that predates a validator can still be
+ * updated (no lockout), and gets convered on its next full rewrite.
+ */
+
+const PROMPTS_VALIDATOR = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: [
+      "agent",
+      "field",
+      "version",
+      "status",
+      "body",
+      "changelog",
+      "updated_by",
+      "updated_at",
+    ],
+    properties: {
+      agent: { bsonType: "string", minLength: 1 },
+      field: { bsonType: "string" },
+      version: { bsonType: "int", minimum: 1 },
+      status: { enum: ["active", "draft", "archived"] },
+      body: { bsonType: "string", minLength: 1 },
+      macros: { bsonType: "object" },
+      variants: { bsonType: "array" },
+      changelog: { bsonType: "string", minLength: 1 },
+      updated_by: { bsonType: "string" },
+      updated_at: { bsonType: "date" },
+    },
+  },
+};
+
+const OVERLAYS_VALIDATOR = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: ["agent", "tenant", "patch", "updated_at"],
+    properties: {
+      agent: { bsonType: "string", minLength: 1 },
+      tenant: { bsonType: "string", minLength: 1 },
+      patch: {
+        bsonType: "object",
+        properties: {
+          body_append: { bsonType: "string" },
+          macros: { bsonType: "object" },
+        },
+        additionalProperties: false,
+      },
+      updated_at: { bsonType: "date" },
+    },
+  },
+};
+
+const FEW_SHOTS_VALIDATOR = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: ["agent", "text", "updated_at"],
+    properties: {
+      agent: { bsonType: "string", minLength: 1 },
+      text: { bsonType: "string", minLength: 1 },
+      note: { bsonType: "string" },
+      updated_at: { bsonType: "date" },
+    },
+  },
+};
+
+const RUNS_VALIDATOR = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: [
+      "ts",
+      "agent",
+      "prompt_version",
+      "input",
+      "output",
+      "model",
+      "latency_ms",
+      "tokens_in",
+      "tokens_out",
+    ],
+    properties: {
+      ts: { bsonType: "date" },
+      agent: { bsonType: "string", minLength: 1 },
+      prompt_version: { bsonType: "int", minimum: 1 },
+      variant: { bsonType: ["string", "null"] },
+      tenant: { bsonType: ["string", "null"] },
+      input: { bsonType: "string" },
+      output: { bsonType: "string" },
+      model: { bsonType: "string" },
+      latency_ms: { bsonType: "int", minimum: 0 },
+      tokens_in: { bsonType: "int", minimum: 0 },
+      tokens_out: { bsonType: "int", minimum: 0 },
+      verdict: { enum: ["up", "down"] },
+      tools: {
+        bsonType: "array",
+        items: { bsonType: "object" },
+      },
+    },
+  },
+};
+
+/** All collection contracts in one place; new collections join here. */
+const CONTRACTS: Record<string, object> = {
+  prompts: PROMPTS_VALIDATOR,
+  overlays: OVERLAYS_VALIDATOR,
+  few_shots: FEW_SHOTS_VALIDATOR,
+  runs: RUNS_VALIDATOR,
+};
+
+/**
+ * Apply (or update) every collection contract. Existing collections get an
+ * atomically swapped validator via collMod; missing ones (fresh environment)
+ * are created with the validator up front. Safe on every boot — validators
+ * evolve with the domain.
+ */
+export async function ensureValidators(): Promise<void> {
+  for (const [name, validator] of Object.entries(CONTRACTS)) {
+    const options = { validator, validationLevel: "moderate", validationAction: "error" } as const;
+    const exists = await db.listCollections({ name }, { nameOnly: true }).hasNext();
+    if (exists) {
+      await db.command({ collMod: name, ...options });
+    } else {
+      await db.createCollection(name, options);
+    }
+  }
+}

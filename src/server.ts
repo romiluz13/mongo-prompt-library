@@ -1,4 +1,5 @@
 import { connect, close, DB_NAME } from "./library/db";
+import { MongoServerError } from "mongodb";
 import {
   abStats,
   addFewShot,
@@ -22,6 +23,7 @@ import { ensureSemanticIndexes, routeAgent, semanticFewShots } from "./library/s
 import { ensureSearchIndex, searchPrompts } from "./library/search";
 import { streamRunEvents } from "./library/run";
 import { openChangeFeed } from "./library/watch";
+import { ensureValidators } from "./library/validators";
 import { listRuns, setVerdict, analytics } from "./library/store";
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -281,6 +283,18 @@ const server = Bun.serve({
         return await r.handler(ctx);
       } catch (err) {
         if (err instanceof StoreError) return json({ error: err.message }, err.status);
+        // the database itself rejected the write: $jsonSchema contract violation
+        if (err instanceof MongoServerError && err.code === 121) {
+          const details = (err.errInfo as Record<string, unknown> | undefined)?.details;
+          return json(
+            {
+              error: "document failed $jsonSchema validation",
+              collection: err.errmsg?.match(/collection\s+([\w.]+)/)?.[1],
+              details: details ?? err.message.slice(0, 300),
+            },
+            400,
+          );
+        }
         console.error("unhandled route error:", err);
         return json({ error: "internal error" }, 500);
       }
@@ -292,6 +306,7 @@ const server = Bun.serve({
 await connect();
 await ensureSemanticIndexes(); // self-provisions autoEmbed vector indexes, waits for READY
 await ensureSearchIndex(); // self-provisions the full-text Atlas Search index
+await ensureValidators(); // applies $jsonSchema contracts to every collection
 console.log(`prompt-library API on http://localhost:${server.port} (db: ${DB_NAME})`);
 
 process.on("SIGTERM", async () => {

@@ -77,7 +77,13 @@ through the configured gateway. Slice 7 verified in the browser.
 - [x] Research: $rankFusion syntax verified on M0 (5 probe iterations);
       $rerank/$scoreFusion skipped (8.3+, user decision); transactions
       verified on M0
-- [ ] Slice 1 — schema governance
+- [x] Slice 1 — schema governance VERIFIED live: collMod on M0 needs a custom
+      role (readWrite lacks the collMod action) → Atlas custom role
+      `schemaManager` (collMod@promptlib) granted to promptlib-app via UI;
+      validators applied to all 4 collections (moderate/error); probe rejected
+      4 bad writes with code 121 (bad status enum, missing changelog,
+      additionalProperties patch key, negative latency); API surfaces 400 with
+      full schemaRulesNotSatisfied details (verified over HTTP)
 - [ ] Slice 2 — approval workflow + RBAC
 - [ ] Slice 3 — eval gate
 - [ ] Slice 4 — hybrid search
