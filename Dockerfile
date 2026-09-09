@@ -11,7 +11,7 @@ RUN bun install --frozen-lockfile --production
 # app code
 COPY tsconfig.json ./
 COPY src ./src
-COPY console.html ./
+COPY console.html index.html ./
 
 # PORT is injected by the platform (Railway) or defaults to 3000 in code
 EXPOSE 3000

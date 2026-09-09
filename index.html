@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prompt Library — MongoDB as the agent platform store</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel2: #1c2128; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --green: #00ed64; --teal: #39d2c0;
+    --blue: #58a6ff; --amber: #d29922; --red: #f85149;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.6 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  a { color: var(--blue); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .mono { font-family: var(--mono); }
+  /* hero */
+  .hero { position: relative; overflow: hidden; padding: 110px 20px 90px; text-align: center;
+    background:
+      radial-gradient(ellipse 60% 45% at 50% -5%, rgba(0,237,100,.13), transparent 70%),
+      radial-gradient(ellipse 40% 35% at 80% 10%, rgba(57,210,192,.08), transparent 70%); }
+  .hero::before { content: ""; position: absolute; inset: 0; pointer-events: none;
+    background-image: linear-gradient(rgba(48,54,61,.35) 1px, transparent 1px), linear-gradient(90deg, rgba(48,54,61,.35) 1px, transparent 1px);
+    background-size: 44px 44px; mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, black, transparent 75%); }
+  .hero h1 { position: relative; margin: 0 0 14px; font-size: clamp(34px, 6vw, 62px); line-height: 1.08; letter-spacing: -1.5px; font-weight: 800; }
+  .hero h1 .leaf { color: var(--green); }
+  .hero h1 .grad { background: linear-gradient(92deg, var(--green), var(--teal) 55%, var(--blue)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .hero p { position: relative; max-width: 760px; margin: 0 auto 30px; color: var(--muted); font-size: 17px; }
+  .cta { position: relative; display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .cta a { display: inline-block; padding: 12px 26px; border-radius: 8px; font-weight: 600; font-size: 15px; border: 1px solid var(--border); }
+  .cta a:hover { text-decoration: none; }
+  .cta .primary { background: var(--green); color: #05220f; border-color: var(--green); box-shadow: 0 0 30px rgba(0,237,100,.25); }
+  .cta .primary:hover { filter: brightness(1.08); }
+  .cta .ghost { color: var(--text); background: var(--panel); }
+  .cta .ghost:hover { border-color: var(--muted); }
+  /* live stats band */
+  .stats { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; max-width: 880px; margin: 44px auto 0; position: relative; }
+  .stat { background: rgba(22,27,34,.8); border: 1px solid var(--border); border-radius: 10px; padding: 12px 22px; min-width: 130px; backdrop-filter: blur(4px); }
+  .stat b { display: block; font-size: 24px; font-family: var(--mono); color: var(--green); letter-spacing: -1px; }
+  .stat span { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .6px; }
+  /* sections */
+  section { max-width: 1080px; margin: 0 auto; padding: 60px 20px; }
+  h2 { font-size: 26px; letter-spacing: -.5px; margin: 0 0 6px; }
+  .sub { color: var(--muted); margin: 0 0 26px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+  .cap { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px 22px; transition: border-color .15s, transform .15s; }
+  .cap:hover { border-color: var(--green); transform: translateY(-2px); }
+  .cap h3 { margin: 0 0 8px; font-size: 16px; }
+  .cap p { margin: 0 0 12px; color: var(--muted); font-size: 13.5px; }
+  .cap .hero-feat { display: inline-block; font-family: var(--mono); font-size: 11.5px; color: var(--teal); border: 1px solid rgba(57,210,192,.35); border-radius: 999px; padding: 2px 10px; }
+  /* try it */
+  .try { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 22px; }
+  .try-box { display: flex; gap: 10px; }
+  .try-box input { flex: 1; font-size: 15px; padding: 11px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+  .try-box button { font: inherit; font-weight: 600; cursor: pointer; border-radius: 8px; border: 0; padding: 11px 22px; background: var(--green); color: #05220f; }
+  .try-box button:disabled { opacity: .6; cursor: wait; }
+  .match { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+  .match:last-child { border-bottom: 0; }
+  .match .name { font-weight: 600; min-width: 170px; font-family: var(--mono); font-size: 14px; }
+  .score-bar { flex: 0 0 180px; height: 6px; background: var(--bg); border-radius: 4px; overflow: hidden; }
+  .score-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--teal), var(--green)); }
+  .match .score { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+  .match a { font-size: 13px; }
+  .hint { color: var(--muted); font-size: 12.5px; margin-top: 10px; }
+  .hint code { font-family: var(--mono); color: var(--teal); }
+  footer { border-top: 1px solid var(--border); padding: 34px 20px; text-align: center; color: var(--muted); font-size: 13px; }
+  footer .mono { color: var(--teal); }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <h1><span class="leaf">◉</span> Your agents deserve<br><span class="grad">a real prompt platform</span></h1>
+  <p>Versioned prompts with review trails, LLM-judged eval gates, hybrid retrieval, tools, guardrails, and live alerting — every piece a MongoDB document, every change streamed. One database, the whole agent config layer.</p>
+  <div class="cta">
+    <a class="primary" href="/console.html">Open the console →</a>
+    <a class="ghost" href="https://github.com/romiluz13/mongo-prompt-library" target="_blank" rel="noopener">View on GitHub</a>
+  </div>
+  <div class="stats" id="stats">
+    <div class="stat"><b>—</b><span>prompt versions</span></div>
+    <div class="stat"><b>—</b><span>runs</span></div>
+    <div class="stat"><b>—</b><span>agents</span></div>
+    <div class="stat"><b>—</b><span>guardrails fired</span></div>
+    <div class="stat"><b>—</b><span>live via change stream</span></div>
+  </div>
+</div>
+
+<section>
+  <h2>Everything is a document</h2>
+  <p class="sub">No new services, no schemas to sync, no cron jobs. The same store that serves your prompts governs them, evaluates them, and watches them.</p>
+  <div class="grid">
+    <div class="cap">
+      <h3>Version control with a review trail</h3>
+      <p>Draft → review → approved → active, enforced by the database itself. Publishing flips versions inside a transaction; rollback is one call. Every version carries who submitted, approved, and shipped it.</p>
+      <span class="hero-feat">$jsonSchema lifecycle + transactions</span>
+    </div>
+    <div class="cap">
+      <h3>The eval gate</h3>
+      <p>Golden cases run through a candidate prompt and scored by an LLM judge. A regression against the baseline blocks the publish — on the record, with both scores named.</p>
+      <span class="hero-feat">LLM-as-judge, scores as documents</span>
+    </div>
+    <div class="cap">
+      <h3>Hybrid retrieval</h3>
+      <p>Ask in plain language: Vector Search ranks by meaning, Atlas Search by words, one server-side stage fuses them. Every hit shows which retriever contributed what.</p>
+      <span class="hero-feat">$rankFusion + autoEmbed vectors</span>
+    </div>
+    <div class="cap">
+      <h3>Tools + guardrails, served as config</h3>
+      <p>The resolve endpoint returns the full agent bundle: prompt, callable tools with JSON-Schema args, and active guardrails — injection refusal, mid-stream phrase cuts, token caps. All enforced server-side.</p>
+      <span class="hero-feat">one resolve, the whole runner config</span>
+    </div>
+    <div class="cap">
+      <h3>Alerting on the write</h3>
+      <p>Rules are documents. The moment a run or eval lands, rules evaluate; fired alerts stream to every open console tab over the change feed. Latency spikes, guardrail spikes, score drops — zero polling.</p>
+      <span class="hero-feat">change streams as the alert bus</span>
+    </div>
+    <div class="cap">
+      <h3>A git mirror when you want PRs</h3>
+      <p>One command flattens the library into frontmatter'd Markdown — a version tree your team can diff, blame, and review in any git workflow. The database stays the source of truth.</p>
+      <span class="hero-feat">bun run export</span>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Try it — plain language in, the right agent out</h2>
+  <p class="sub">This is the live routing endpoint the console uses, running against the real library.</p>
+  <div class="try">
+    <div class="try-box">
+      <input id="q" placeholder="e.g. a customer is furious, their API is down, they're losing orders" autofocus>
+      <button id="go">Find my agent</button>
+    </div>
+    <div id="out" style="margin-top: 12px;"></div>
+    <p class="hint">Ranked by <code>$vectorSearch</code> over auto-embedded active prompts — open the <a href="/console.html#search">Search tab</a> to see the fused <code>$rankFusion</code> version with per-retriever attribution.</p>
+  </div>
+</section>
+
+<footer>
+  <span class="mono">mongo-prompt-library</span> — a working template, not a slide deck. Everything on this page is backed by the live API.
+</footer>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+(async () => {
+  try {
+    const [s, an] = await Promise.all([
+      fetch("/api/stats").then(r => r.json()),
+      fetch("/api/analytics").then(r => r.json()),
+    ]);
+    const blocks = an.agents.reduce((acc, a) => acc + a.guardrail_blocks, 0);
+    const cells = [s.prompts, s.runs, an.agents.length, blocks, "●"];
+    $("stats").querySelectorAll(".stat b").forEach((b, i) => { b.textContent = cells[i]; });
+    const live = $("stats").lastElementChild;
+    live.querySelector("b").style.color = "var(--green)";
+    live.querySelector("b").style.textShadow = "0 0 12px rgba(0,237,100,.6)";
+  } catch {}
+})();
+
+async function doRoute() {
+  const q = $("q").value.trim();
+  if (!q) return;
+  $("go").disabled = true;
+  $("out").innerHTML = `<span style="color:var(--muted)">ranking agents…</span>`;
+  try {
+    const d = await (await fetch("/api/route?q=" + encodeURIComponent(q))).json();
+    const max = d.matches[0]?.score || 1;
+    $("out").innerHTML = d.matches.slice(0, 4).map(m => `
+      <div class="match">
+        <span class="name">${esc(m.agent)}</span>
+        <span class="score-bar"><i style="width:${Math.round((m.score/max)*100)}%"></i></span>
+        <span class="score">${m.score.toFixed(3)}</span>
+        <a href="/console.html" onclick="localStorage.setItem('prefillAgent','${esc(m.agent)}')">Open in console →</a>
+      </div>`).join("");
+  } catch (e) {
+    $("out").innerHTML = `<span style="color:var(--red)">${esc(e.message)}</span>`;
+  } finally { $("go").disabled = false; }
+}
+$("go").onclick = doRoute;
+$("q").addEventListener("keydown", e => { if (e.key === "Enter") doRoute(); });
+</script>
+</body>
+</html>

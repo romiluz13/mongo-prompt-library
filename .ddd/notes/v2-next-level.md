@@ -179,4 +179,41 @@ through the configured gateway. Slice 7 verified in the browser.
       URI explicitly. OPEN: no direct negative DB probe for the two alert
       collections (MCP insert tool rejected the array param); contracts
       structurally identical to probe-verified ones from slices 1/3/5
-- [ ] Slice 7 — showcase surface + deploy + README
+- [x] Slice 7 — showcase surface VERIFIED live: `.env.example` documents all
+      env vars (MONGODB_URI, PORT, PROMPTLIB_DB, 3 RBAC keys, 3 LLM vars);
+      git mirror export — `src/library/export.ts` exportAll() wipes and
+      rebuilds `export/` (gitignored) from the live store: one frontmatter'd
+      .md per prompt version (status, changelog, macros, variants, review
+      trail), overlays, few-shots, tools, guardrails, per-agent `evals.md`
+      (golden cases + score history), root `ops.md` (rules + last 50 alerts),
+      index README.md — `bun run export` generated 37 files for 4 agents on
+      Atlas (verified: support-triage v3 frontmatter correct, tools
+      frontmatter correct); `bunx tsc --noEmit` clean after fixing a missing
+      paren (TS1005) and the iso() signature (Date | undefined → "—");
+      landing `index.html` at `/` (server routes `/` + `/index.html` →
+      index.html, `/console` + `/console.html` → console.html; Dockerfile
+      copies both): cinematic hero, live stats band (fetched /api/stats +
+      /api/analytics: 12 versions / 18 runs / 4 agents / 4 guardrail blocks /
+      live dot — verified populated in browser), 6 capability cards with
+      MongoDB feature badges, live try-it calling /api/route (verified in
+      browser: "customer furious API down" → support-triage 0.668 top hit
+      with score bars, "Open in console" prefills the agent via
+      localStorage); console redesigned into 5 tabs — Playground (routing
+      hero + agent detail), Library (gallery; opening an agent switches to
+      Playground — verified), Evals (new overview: per-agent active version,
+      golden case count, suite-run count, latest run table mean/baseline/
+      gate, run-eval-on-active button, change-stream refresh on eval_runs
+      writes — verified: support-triage card shows 4 runs, v4 mean 2.0 vs
+      baseline v3 7.5 ⚠ regression), Search (hybrid $rankFusion panel +
+      slider), Ops (analytics 15 cols, rules + live alert feed — verified:
+      5 rules rows, 5 alerts, 5 analytics rows); hash routing (#playground/
+      #library/#evals/#search/#ops, hashchange handler, landing links to
+      #search); README rewritten as showcase (tour table, capability map,
+      quickstart with .env, complete 24-endpoint API table, copy-these
+      pieces, updated layout incl. new library files, DDD note link);
+      browser-verified end-to-end (screenshots in .ddd/landing.png and
+      .ddd/console-tabs.png)
+
+All 7 slices done. Remaining deployment of the new surface: the Railway
+service rebuilds from the Dockerfile on push — verify the landing at
+https://promptlib-production.up.railway.app/ after this push.

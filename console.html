@@ -34,6 +34,14 @@
   .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
   .chip { background: var(--panel); border: 1px solid var(--border); border-radius: 999px; padding: 3px 12px; font-size: 12px; color: var(--muted); }
   .chip b { color: var(--text); }
+  /* tabs */
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin: 14px 0 22px; flex-wrap: wrap; }
+  .tab { background: transparent; border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0; padding: 7px 16px; color: var(--muted); font-weight: 600; font-size: 13px; }
+  .tab:hover { color: var(--text); border-color: var(--border); background: var(--panel); }
+  .tab.active { color: var(--green); background: var(--panel); border-color: var(--border); box-shadow: inset 0 -2px 0 var(--green); }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  .eval-card h3 { margin: 0 0 6px; font-size: 14px; font-family: var(--mono); color: var(--green); }
   section { margin: 26px 0; }
   h2 { font-size: 15px; margin: 0 0 4px; letter-spacing: -0.2px; }
   .sub { color: var(--muted); font-size: 12.5px; margin: 0 0 14px; }
@@ -153,6 +161,15 @@
   </header>
   <div class="chips" id="chips"></div>
 
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-tab="playground">Playground</button>
+    <button class="tab" data-tab="library">Library</button>
+    <button class="tab" data-tab="evals">Evals</button>
+    <button class="tab" data-tab="search">Search</button>
+    <button class="tab" data-tab="ops">Ops</button>
+  </nav>
+
+  <div class="tab-panel active" id="panel-playground">
   <section>
     <h2>Describe what you need</h2>
     <p class="sub">Plain language in, the right agent out — Vector Search ranks every agent's active prompt against your request.</p>
@@ -165,6 +182,28 @@
     </div>
   </section>
 
+  <section id="detailSection" style="display:none">
+    <div class="detail" id="detail"></div>
+  </section>
+  </div><!-- /panel-playground -->
+
+  <div class="tab-panel" id="panel-library">
+  <section>
+    <h2>Agent gallery</h2>
+    <p class="sub">Every prompt is a versioned document: base body, macros, A/B variants, tenant overlays, few-shots. Click an agent to open its detail in the Playground.</p>
+    <div class="grid" id="agents"></div>
+  </section>
+  </div><!-- /panel-library -->
+
+  <div class="tab-panel" id="panel-evals">
+  <section>
+    <h2>Evals — the publish gate</h2>
+    <p class="sub">Golden cases scored by an LLM judge, 0-10 per run. A regression against baseline blocks the publish, on the record. Run the suite on any agent's active version here.</p>
+    <div class="grid" id="evalsOverview"></div>
+  </section>
+  </div><!-- /panel-evals -->
+
+  <div class="tab-panel" id="panel-search">
   <section>
     <h2>Hybrid search — one $rankFusion stage, two retrievers</h2>
     <p class="sub">Vector Search (meaning) + Atlas Search (words) fused server-side by Reciprocal Rank Fusion. Every hit shows how each retriever contributed.</p>
@@ -181,13 +220,9 @@
       <div id="hybResults" style="margin-top: 10px;"></div>
     </div>
   </section>
+  </div><!-- /panel-search -->
 
-  <section>
-    <h2>Agent gallery</h2>
-    <p class="sub">Every prompt is a versioned document: base body, macros, A/B variants, tenant overlays, few-shots. Click an agent to open it.</p>
-    <div class="grid" id="agents"></div>
-  </section>
-
+  <div class="tab-panel" id="panel-ops">
   <section>
     <h2>Prompt ops analytics</h2>
     <p class="sub">One aggregation pass: runs, human verdicts, latency percentiles, tokens, eval scores, guardrail activity — per agent, live.</p>
@@ -220,10 +255,7 @@
       </div>
     </div>
   </section>
-
-  <section id="detailSection" style="display:none">
-    <div class="detail" id="detail"></div>
-  </section>
+  </div><!-- /panel-ops -->
 </div>
 
 <script>
@@ -240,6 +272,20 @@ async function api(path, opts) {
 }
 
 let currentAgent = null;
+
+// ---------- tabs ----------
+const TABS = ["playground", "library", "evals", "search", "ops"];
+function showTab(name) {
+  if (!TABS.includes(name)) name = "playground";
+  for (const t of TABS) {
+    document.querySelector(`#tabs [data-tab="${t}"]`)?.classList.toggle("active", t === name);
+    $("panel-" + t)?.classList.toggle("active", t === name);
+  }
+  if (name === "evals") loadEvalsOverview();
+  history.replaceState(null, "", "#" + name);
+}
+document.querySelectorAll("#tabs .tab").forEach(b => { b.onclick = () => showTab(b.dataset.tab); });
+window.addEventListener("hashchange", () => showTab(location.hash.slice(1)));
 
 /** Review trail line: who submitted, who approved, who published, and when. */
 function reviewTrail(v) {
@@ -465,6 +511,7 @@ async function loadAnalytics() {
 // ---------- agent detail ----------
 async function openAgent(agent) {
   currentAgent = agent;
+  showTab("playground");
   $("detailSection").style.display = "";
   $("detailSection").scrollIntoView({ behavior: "smooth", block: "start" });
   await renderDetail();
@@ -926,6 +973,58 @@ async function doVerdict(v) {
   } catch (e) { alert(e.message); }
 }
 
+// ---------- evals overview tab ----------
+async function loadEvalsOverview() {
+  const el = $("evalsOverview");
+  if (!el) return;
+  try {
+    const agents = await api("/api/agents");
+    el.innerHTML = (await Promise.all(agents.map(async a => {
+      const [runs, cases] = await Promise.all([
+        api(`/api/eval/${a.agent}`).catch(() => []),
+        api(`/api/eval/cases/${a.agent}`).catch(() => []),
+      ]);
+      const latest = runs[0];
+      const col = latest ? (latest.mean_score >= 7 ? "var(--green)" : latest.mean_score >= 4 ? "var(--amber)" : "var(--red)") : "var(--muted)";
+      return `
+      <div class="card eval-card">
+        <h3>${esc(a.agent)}</h3>
+        <div class="meta" style="margin-bottom:10px">
+          <span>active <b>v${a.active_version ?? "—"}</b></span>
+          <span>golden cases <b>${cases.length}</b></span>
+          <span>suite runs <b>${runs.length}</b></span>
+        </div>
+        ${latest ? `
+        <table>
+          <tr><th>last suite run</th><th>mean</th><th>vs baseline</th><th>gate</th></tr>
+          <tr>
+            <td>${fmtDate(latest.ts)} · v${latest.version}</td>
+            <td><b style="color:${col}">${latest.mean_score.toFixed(1)}</b>/10</td>
+            <td>${latest.baseline_version != null ? `v${latest.baseline_version}: ${latest.baseline_mean.toFixed(1)}` : "—"}</td>
+            <td>${latest.regression ? `<span class="err">⚠ regression</span>` : `<span class="flash-note">pass</span>`}</td>
+          </tr>
+        </table>` : `<div class="empty">no suite runs yet</div>`}
+        <div class="composer-row" style="margin-top:10px">
+          <button class="small primary" onclick="doEvalActive('${esc(a.agent)}', ${a.active_version ?? 0})" ${a.active_version ? "" : "disabled"}>Run eval on active v${a.active_version ?? "—"}</button>
+          <button class="small" onclick="openAgent('${esc(a.agent)}')">Manage cases →</button>
+        </div>
+      </div>`;
+    }))).join("");
+  } catch {}
+}
+
+async function doEvalActive(agent, version) {
+  if (!version) return;
+  if (!confirm(`Run the golden suite against ${agent} v${version}? The LLM judge takes a few seconds per case.`)) return;
+  try {
+    const er = await api(`/api/eval/${agent}/${version}`, { method: "POST" });
+    alert(`${agent} v${version} scored ${er.mean_score.toFixed(1)}/10` +
+      (er.baseline_version != null ? ` (baseline v${er.baseline_version}: ${er.baseline_mean.toFixed(1)})` : "") +
+      (er.regression ? " — ⚠ REGRESSION, publish will be blocked" : " — pass"));
+    loadEvalsOverview();
+  } catch (e) { alert(e.message); }
+}
+
 // ---------- change stream (live) ----------
 function connectStream() {
   const es = new EventSource("/api/stream");
@@ -945,12 +1044,16 @@ function connectStream() {
     if (ev.coll === "alerts" && ev.op === "insert") pushAlert(ev.doc);
     else if (ev.coll === "alerts") loadAlerts();
     if (ev.coll === "alert_rules") loadRules();
+    if (ev.coll === "eval_runs" && $("panel-evals").classList.contains("active")) loadEvalsOverview();
     loadStats(); loadAnalytics(); loadAgents();
     if (currentAgent && Date.now() >= suppressDetailUntil) renderDetail();
   };
 }
 
 // ---------- boot ----------
+showTab(TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "playground");
+const prefill = localStorage.getItem("prefillAgent");
+if (prefill) { localStorage.removeItem("prefillAgent"); openAgent(prefill); }
 metricOptions(); loadRules(); loadAlerts();
 loadStats(); loadAgents(); loadAnalytics(); connectStream();
 </script>

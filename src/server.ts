@@ -526,7 +526,10 @@ const server = Bun.serve({
   async fetch(req, server): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname === "/healthz") return json({ ok: true, db: DB_NAME });
-    if (url.pathname === "/" || url.pathname === "/console.html") {
+    if (url.pathname === "/" || url.pathname === "/index.html") {
+      return new Response(Bun.file("./index.html"));
+    }
+    if (url.pathname === "/console" || url.pathname === "/console.html") {
       return new Response(Bun.file("./console.html"));
     }
 
