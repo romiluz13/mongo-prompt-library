@@ -50,6 +50,19 @@
   .cap h3 { margin: 0 0 8px; font-size: 16px; }
   .cap p { margin: 0 0 12px; color: var(--muted); font-size: 13.5px; }
   .cap .hero-feat { display: inline-block; font-family: var(--mono); font-size: 11.5px; color: var(--teal); border: 1px solid rgba(57,210,192,.35); border-radius: 999px; padding: 2px 10px; }
+  /* pains */
+  .pain h3 { color: var(--red); font-size: 15.5px; }
+  .pain h3::before { content: "✗ "; font-family: var(--mono); }
+  .pain .fix { display: block; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); color: var(--green); font-size: 12.5px; }
+  .pain .fix::before { content: "→ fixed: "; font-family: var(--mono); color: var(--muted); }
+  /* the "you could stitch this together" alternatives */
+  .alt h3 { color: var(--amber); font-size: 15.5px; }
+  .alt .fix::before { content: "→ instead here: "; }
+  /* example chips */
+  .examples { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; align-items: center; }
+  .examples .lbl { color: var(--muted); font-size: 12px; }
+  .ex-chip { background: var(--panel2); border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; font-size: 12px; color: var(--muted); cursor: pointer; }
+  .ex-chip:hover { color: var(--text); border-color: var(--teal); }
   /* try it */
   .try { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 22px; }
   .try-box { display: flex; gap: 10px; }
@@ -72,24 +85,79 @@
 <body>
 
 <div class="hero">
-  <h1><span class="leaf">◉</span> Your agents deserve<br><span class="grad">a real prompt platform</span></h1>
-  <p>Versioned prompts with review trails, LLM-judged eval gates, hybrid retrieval, tools, guardrails, and live alerting — every piece a MongoDB document, every change streamed. One database, the whole agent config layer.</p>
+  <h1><span class="leaf">◉</span> Your prompts are hard-coded.<br><span class="grad">That's the bug.</span></h1>
+  <p>Every tweak is a deploy. No review, no rollback, no evals, no way to know which change broke your agent — until users tell you. Prompt Library moves prompts into MongoDB: versioned like code, gated by evals before they ship, searchable, observable, and streamed live. One database, the whole agent config layer.</p>
   <div class="cta">
-    <a class="primary" href="/console.html">Open the console →</a>
+    <a class="primary" href="/console.html?tour=1">▶ Take the 60-second tour</a>
+    <a class="ghost" href="/console.html">Open the console</a>
     <a class="ghost" href="https://github.com/romiluz13/mongo-prompt-library" target="_blank" rel="noopener">View on GitHub</a>
   </div>
   <div class="stats" id="stats">
     <div class="stat"><b>—</b><span>prompt versions</span></div>
-    <div class="stat"><b>—</b><span>runs</span></div>
+    <div class="stat"><b>—</b><span>runs recorded</span></div>
     <div class="stat"><b>—</b><span>agents</span></div>
-    <div class="stat"><b>—</b><span>guardrails fired</span></div>
+    <div class="stat"><b>—</b><span>injections blocked</span></div>
     <div class="stat"><b>—</b><span>live via change stream</span></div>
   </div>
 </div>
 
 <section>
+  <h2>Sound familiar?</h2>
+  <p class="sub">The five taxes you pay when prompts live in source code — and how the library pays them for you.</p>
+  <div class="grid">
+    <div class="cap pain">
+      <h3>Every tweak is a deploy</h3>
+      <p>Change one word in a prompt and you're in a PR, CI, and a ship window. So people stop iterating — or worse, they hot-patch prod.</p>
+      <span class="fix">edit a version, get a review, publish with one call — rollback too</span>
+    </div>
+    <div class="cap pain">
+      <h3>You find regressions from users</h3>
+      <p>"The bot got dumber last week." Which change did it? Nobody knows; there's no score attached to any prompt version.</p>
+      <span class="fix">an LLM judge scores every candidate; a regression blocks the publish automatically</span>
+    </div>
+    <div class="cap pain">
+      <h3>Anyone can change anything</h3>
+      <p>Prompt edits skip review trails entirely. A whole personality swap can ship with one string diff nobody reads.</p>
+      <span class="fix">draft → review → approved → live, enforced by the database itself</span>
+    </div>
+    <div class="cap pain">
+      <h3>Prompts scattered everywhere</h3>
+      <p>Strings in ten files across three repos. No way to search them, no idea which agent uses which version.</p>
+      <span class="fix">one library, hybrid meaning + keyword search, a git mirror export when you want PRs</span>
+    </div>
+    <div class="cap pain">
+      <h3>It broke in prod and nobody noticed</h3>
+      <p>Latency doubled, guardrails started firing, the eval score slipped — three days before anyone looked at a dashboard.</p>
+      <span class="fix">alert rules evaluate the instant data lands; fired alerts stream to you live</span>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>You could stitch this together</h2>
+  <p class="sub">The usual answer is a stack of prompt tooling — another service to run, another schema to sync, another bill. This is one database you already know how to operate.</p>
+  <div class="grid">
+    <div class="cap alt">
+      <h3>An LLM observability platform</h3>
+      <p>Langfuse, LangSmith, PromptLayer and friends give you tracing and evals — as a separate service. New deploy target, per-seat pricing, and your prompts living in someone else's store.</p>
+      <span class="fix">documents + change streams in the MongoDB you already run</span>
+    </div>
+    <div class="cap alt">
+      <h3>Prompt files in the repo</h3>
+      <p>YAML or Python constants: versioned by git, sure — but no eval gate, no A/B routing, no rollback without a deploy, and no live view of what's actually serving.</p>
+      <span class="fix">lifecycle, evals, and routing as database behavior — with a git mirror when you want diffs</span>
+    </div>
+    <div class="cap alt">
+      <h3>Feature flags + a dashboard</h3>
+      <p>Flags can flip a prompt on and off, but they can't score it, review it, or tell you which version produced a bad answer. The dashboard tells you <i>that</i> something happened, hours later.</p>
+      <span class="fix">every run recorded with version, variant, tenant, tokens — and alerts on the write</span>
+    </div>
+  </div>
+</section>
+
+<section>
   <h2>Everything is a document</h2>
-  <p class="sub">No new services, no schemas to sync, no cron jobs. The same store that serves your prompts governs them, evaluates them, and watches them.</p>
+  <p class="sub">No new services, no schemas to sync, no cron jobs. The same store that serves your prompts governs them, evaluates them, and watches them. <a href="/console.html?tour=1">Take the tour to see each piece live →</a></p>
   <div class="grid">
     <div class="cap">
       <h3>Version control with a review trail</h3>
@@ -131,6 +199,12 @@
     <div class="try-box">
       <input id="q" placeholder="e.g. a customer is furious, their API is down, they're losing orders" autofocus>
       <button id="go">Find my agent</button>
+    </div>
+    <div class="examples">
+      <span class="lbl">try:</span>
+      <span class="ex-chip" onclick="chip(this)">customer is furious, API is down, losing orders</span>
+      <span class="ex-chip" onclick="chip(this)">review this PR — it might hide a SQL injection</span>
+      <span class="ex-chip" onclick="chip(this)">research: is RAG better than fine-tuning?</span>
     </div>
     <div id="out" style="margin-top: 12px;"></div>
     <p class="hint">Ranked by <code>$vectorSearch</code> over auto-embedded active prompts — open the <a href="/console.html#search">Search tab</a> to see the fused <code>$rankFusion</code> version with per-retriever attribution.</p>
@@ -182,6 +256,7 @@ async function doRoute() {
 }
 $("go").onclick = doRoute;
 $("q").addEventListener("keydown", e => { if (e.key === "Enter") doRoute(); });
+function chip(el) { $("q").value = el.textContent; doRoute(); }
 </script>
 </body>
 </html>

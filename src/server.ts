@@ -166,6 +166,11 @@ route("POST", "/api/prompts/:agent/:version/review", async ctx => {
 route("POST", "/api/prompts/:agent/:version/publish", async ctx => {
   requireRole(ctx, ["admin"]);
   const { by, force } = await body<{ by?: string; force?: boolean }>(ctx).catch(() => ({}) as { by?: string; force?: boolean });
+  // the eval gate is the product: force-bypassing it is admin-only even in
+  // open demo mode, and impossible anonymously on any deployment
+  if (force === true && roleFor(ctx) !== "admin") {
+    throw new StoreError("force publish requires the admin key (x-api-key) — the eval gate is not anonymously bypassable", 403);
+  }
   return json(await publish(ctx.params.agent, Number(ctx.params.version), by, { force: force === true }));
 });
 
@@ -334,6 +339,9 @@ route("POST", "/api/runs/:agent", async ctx => {
   server.timeout(ctx, 0); // disable the 10s idle timeout for SSE
   const input = await body<{ input?: string; tenant?: string; variant?: string; chat?: boolean }>(ctx);
   if (!String(input.input ?? "").trim()) return json({ error: "input is required" }, 400);
+  // chat mode exposes a prompt-writing meta-tool to the model — it stays a
+  // local-dev convenience, never an anonymous capability on a public deploy
+  if (input.chat === true) requireRole(ctx, ["editor"]);
 
   const events = streamRunEvents(ctx.params.agent, {
     input: String(input.input),
