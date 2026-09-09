@@ -15,6 +15,7 @@
  */
 
 import * as store from "./store";
+import { evaluate } from "./alerts";
 import { semanticFewShots } from "./semantic";
 import { llmConfig, streamChat } from "./llm";
 import type { ChatMessage, ChatTool, ToolCall } from "./llm";
@@ -363,6 +364,8 @@ export async function* streamRunEvents(
       guardrail_blocks: inputBlocks,
     };
     await store.insertRun(blockedRun);
+    // alert rules see blocked runs too — a spike in refusals is a signal
+    await evaluate("runs", blockedRun);
     return;
   }
 
@@ -605,6 +608,8 @@ export async function* streamRunEvents(
     ...(outputBlocks.length > 0 ? { guardrail_blocks: outputBlocks } : {}),
   };
   await store.insertRun(run);
+  // observability: alert rules evaluate this run the moment it is written
+  await evaluate("runs", run);
   const ab = await store.abStats(agent);
 
   yield sse({

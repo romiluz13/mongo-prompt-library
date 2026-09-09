@@ -1,5 +1,5 @@
 import type { WithId } from "mongodb";
-import { fewShots, guardrails, overlays, prompts, runs, tools, withTx } from "./db";
+import { evalRuns, fewShots, guardrails, overlays, prompts, runs, tools, withTx } from "./db";
 import type {
   AgentPrompt,
   FewShot,
@@ -562,17 +562,25 @@ export interface Analytics {
     p95_latency_ms: number | null;
     tokens_in: number;
     tokens_out: number;
+    /** eval observability */
+    eval_runs: number;
+    eval_mean: number | null;
+    eval_regressions: number;
+    /** guardrail observability */
+    guardrail_blocks: number;
+    blocked_runs: number;
   }[];
 }
 
 /**
  * One $facet pass over runs joined to library counts per agent: win rates,
- * latency percentiles ($percentile, MongoDB 7+), token totals. This is the
- * "prompt ops" view — the aggregation framework doing the analytics the
- * console renders.
+ * latency percentiles ($percentile, MongoDB 7+), token totals, latest eval
+ * score ($last over a $sort), and guardrail activity. This is the "prompt
+ * ops" view — the aggregation framework doing the analytics the console
+ * renders.
  */
 export async function analytics(): Promise<Analytics> {
-  const [libAgg, runAgg] = await Promise.all([
+  const [libAgg, runAgg, evalAgg, guardAgg] = await Promise.all([
     prompts.aggregate<{ _id: string; versions: number }>([
       { $group: { _id: "$agent", versions: { $sum: 1 } } },
     ]).toArray(),
@@ -601,6 +609,52 @@ export async function analytics(): Promise<Analytics> {
         },
       ])
       .toArray(),
+    // eval scores per agent: count, regressions, and the freshest mean
+    // ($group's $last sees documents in pipeline order — $sort first)
+    evalRuns
+      .aggregate<{
+        _id: string;
+        eval_runs: number;
+        eval_mean: number | null;
+        eval_regressions: number;
+      }>([
+        { $sort: { ts: 1 } },
+        {
+          $group: {
+            _id: "$agent",
+            eval_runs: { $sum: 1 },
+            eval_mean: { $last: "$mean_score" },
+            eval_regressions: { $sum: { $cond: [{ $eq: ["$regression", true] }, 1, 0] } },
+          },
+        },
+      ])
+      .toArray(),
+    // guardrail activity per agent: total blocks and how many runs were cut
+    runs
+      .aggregate<{
+        _id: string;
+        guardrail_blocks: number;
+        blocked_runs: number;
+      }>([
+        {
+          $group: {
+            _id: "$agent",
+            guardrail_blocks: {
+              $sum: { $size: { $ifNull: ["$guardrail_blocks", []] } },
+            },
+            blocked_runs: {
+              $sum: {
+                $cond: [
+                  { $gt: [{ $size: { $ifNull: ["$guardrail_blocks", []] } }, 0] },
+                  1,
+                  0,
+                ],
+              },
+            },
+          },
+        },
+      ])
+      .toArray(),
   ]);
 
   const overlayCounts = new Map(
@@ -614,9 +668,13 @@ export async function analytics(): Promise<Analytics> {
     ]).toArray()).map(f => [f._id, f.n]),
   );
   const runBy = new Map(runAgg.map(r => [r._id, r]));
+  const evalBy = new Map(evalAgg.map(r => [r._id, r]));
+  const guardBy = new Map(guardAgg.map(r => [r._id, r]));
 
   const agents = libAgg.map(l => {
     const r = runBy.get(l._id);
+    const e = evalBy.get(l._id);
+    const g = guardBy.get(l._id);
     return {
       agent: l._id,
       versions: l.versions,
@@ -629,6 +687,11 @@ export async function analytics(): Promise<Analytics> {
       p95_latency_ms: r?.p95_latency_ms != null ? Math.round(r.p95_latency_ms) : null,
       tokens_in: r?.tokens_in ?? 0,
       tokens_out: r?.tokens_out ?? 0,
+      eval_runs: e?.eval_runs ?? 0,
+      eval_mean: e?.eval_mean != null ? Math.round(e.eval_mean * 10) / 10 : null,
+      eval_regressions: e?.eval_regressions ?? 0,
+      guardrail_blocks: g?.guardrail_blocks ?? 0,
+      blocked_runs: g?.blocked_runs ?? 0,
     };
   });
   agents.sort((a, b) => a.agent.localeCompare(b.agent));

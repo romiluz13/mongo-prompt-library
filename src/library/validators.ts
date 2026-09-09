@@ -229,6 +229,71 @@ const GUARDRAILS_VALIDATOR = {
   },
 };
 
+const ALERT_RULES_VALIDATOR = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: [
+      "name",
+      "description",
+      "source",
+      "metric",
+      "op",
+      "threshold",
+      "agents",
+      "active",
+      "updated_at",
+    ],
+    properties: {
+      name: { bsonType: "string", minLength: 1 },
+      description: { bsonType: "string", minLength: 1 },
+      source: { enum: ["runs", "eval_runs"] },
+      metric: {
+        enum: ["latency_ms", "tokens_out", "guardrail_blocks", "mean_score", "regression"],
+      },
+      op: { enum: ["gt", "lt", "eq"] },
+      threshold: { bsonType: "number", minimum: 0 },
+      agents: {
+        bsonType: "array",
+        items: { bsonType: "string", minLength: 1 },
+        minItems: 1,
+      },
+      active: { bsonType: "bool" },
+      updated_at: { bsonType: "date" },
+    },
+  },
+};
+
+const ALERTS_VALIDATOR = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: [
+      "ts",
+      "rule",
+      "agent",
+      "source",
+      "metric",
+      "op",
+      "threshold",
+      "value",
+      "message",
+    ],
+    properties: {
+      ts: { bsonType: "date" },
+      rule: { bsonType: "string", minLength: 1 },
+      agent: { bsonType: "string", minLength: 1 },
+      source: { enum: ["runs", "eval_runs"] },
+      metric: {
+        enum: ["latency_ms", "tokens_out", "guardrail_blocks", "mean_score", "regression"],
+      },
+      op: { enum: ["gt", "lt", "eq"] },
+      threshold: { bsonType: "number" },
+      value: { bsonType: "number" },
+      message: { bsonType: "string", minLength: 1 },
+      version: { bsonType: "int", minimum: 1 },
+    },
+  },
+};
+
 /** All collection contracts in one place; new collections join here. */
 const CONTRACTS: Record<string, object> = {
   prompts: PROMPTS_VALIDATOR,
@@ -239,6 +304,8 @@ const CONTRACTS: Record<string, object> = {
   eval_runs: EVAL_RUNS_VALIDATOR,
   tools: TOOLS_VALIDATOR,
   guardrails: GUARDRAILS_VALIDATOR,
+  alert_rules: ALERT_RULES_VALIDATOR,
+  alerts: ALERTS_VALIDATOR,
 };
 
 /**

@@ -1,6 +1,6 @@
-import { evalCases, fewShots, guardrails, overlays, prompts, tools } from "./db";
+import { alertRules, evalCases, fewShots, guardrails, overlays, prompts, tools } from "./db";
 import { getActive } from "./store";
-import type { AgentPrompt, EvalCase, FewShot, Guardrail, PromptOverlay, ToolDef, Variant } from "./types";
+import type { AgentPrompt, AlertRule, EvalCase, FewShot, Guardrail, PromptOverlay, ToolDef, Variant } from "./types";
 
 /**
  * Demo seed: four different agents, each with a version history, A/B variants,
@@ -339,6 +339,61 @@ const SEED_GUARDRAILS: Guardrail[] = [
   },
 ];
 
+const SEED_ALERT_RULES: AlertRule[] = [
+  {
+    name: "slow-run",
+    description:
+      "Any run slower than 40s. Slow runs are the first symptom of prompt bloat " +
+      "or a model regression — surface them before users complain.",
+    source: "runs",
+    metric: "latency_ms",
+    op: "gt",
+    threshold: 40_000,
+    agents: ["*"],
+    active: true,
+    updated_at: new Date(),
+  },
+  {
+    name: "guardrail-spike",
+    description:
+      "A guardrail fired. Refusals and stream cuts are normal individually; " +
+      "watch the trend.",
+    source: "runs",
+    metric: "guardrail_blocks",
+    op: "gt",
+    threshold: 0,
+    agents: ["*"],
+    active: true,
+    updated_at: new Date(),
+  },
+  {
+    name: "eval-regression",
+    description:
+      "An eval suite run flagged a regression vs. the active baseline. The " +
+      "publish gate already blocked it; this makes it visible in the feed.",
+    source: "eval_runs",
+    metric: "regression",
+    op: "eq",
+    threshold: 1,
+    agents: ["*"],
+    active: true,
+    updated_at: new Date(),
+  },
+  {
+    name: "score-drop",
+    description:
+      "Latest eval mean fell under 6.0/10 — quality is drifting even if no " +
+      "baseline comparison fired.",
+    source: "eval_runs",
+    metric: "mean_score",
+    op: "lt",
+    threshold: 6,
+    agents: ["*"],
+    active: true,
+    updated_at: new Date(),
+  },
+];
+
 /** Idempotent: seeds only when the library is empty. */
 export async function seedIfEmpty() {
   // golden eval cases seed independently: an existing library can still lack
@@ -361,6 +416,11 @@ export async function seedIfEmpty() {
     await guardrails.insertMany(SEED_GUARDRAILS);
     guardrailsSeeded = SEED_GUARDRAILS.length;
   }
+  let rulesSeeded = 0;
+  if ((await alertRules.countDocuments()) === 0) {
+    await alertRules.insertMany(SEED_ALERT_RULES);
+    rulesSeeded = SEED_ALERT_RULES.length;
+  }
 
   const count = await prompts.countDocuments();
   if (count > 0) {
@@ -370,6 +430,7 @@ export async function seedIfEmpty() {
       ...(evalCasesSeeded ? { eval_cases_seeded: evalCasesSeeded } : {}),
       ...(toolsSeeded ? { tools_seeded: toolsSeeded } : {}),
       ...(guardrailsSeeded ? { guardrails_seeded: guardrailsSeeded } : {}),
+      ...(rulesSeeded ? { alert_rules_seeded: rulesSeeded } : {}),
     };
   }
 
@@ -386,6 +447,7 @@ export async function seedIfEmpty() {
     eval_cases: SEED_EVAL_CASES.length,
     tools: SEED_TOOLS.length,
     guardrails: SEED_GUARDRAILS.length,
+    alert_rules: SEED_ALERT_RULES.length,
     active_version: active?.version ?? null,
   };
 }

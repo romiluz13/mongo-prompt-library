@@ -43,6 +43,13 @@ import { ensureSearchIndex, searchPrompts } from "./library/search";
 import { hybridSearch } from "./library/hybrid";
 import { streamRunEvents } from "./library/run";
 import { openChangeFeed } from "./library/watch";
+import {
+  clearAlerts,
+  deleteRule,
+  listAlerts,
+  listRules,
+  upsertRule,
+} from "./library/alerts";
 import { ensureValidators } from "./library/validators";
 import { listRuns, setVerdict, analytics } from "./library/store";
 
@@ -241,6 +248,45 @@ route("DELETE", "/api/guardrails/:name", async ctx => {
   requireRole(ctx, ["editor"]);
   await deleteGuardrail(ctx.params.name);
   return json({ ok: true });
+});
+
+// alerting — rules evaluated on every run/eval write; alerts stream to the
+// console over the change stream (GET /api/stream) with no polling
+route("GET", "/api/alert-rules", async () => json(await listRules()));
+
+route("POST", "/api/alert-rules", async ctx => {
+  requireRole(ctx, ["editor"]);
+  const input = await body<{
+    name: string;
+    description: string;
+    source: "runs" | "eval_runs";
+    metric: "latency_ms" | "tokens_out" | "guardrail_blocks" | "mean_score" | "regression";
+    op: "gt" | "lt" | "eq";
+    threshold: number;
+    agents: string[];
+    active: boolean;
+  }>(ctx);
+  await upsertRule(input);
+  return json({ ok: true, ...input }, 201);
+});
+
+route("DELETE", "/api/alert-rules/:name", async ctx => {
+  requireRole(ctx, ["editor"]);
+  await deleteRule(ctx.params.name);
+  return json({ ok: true });
+});
+
+route("GET", "/api/alerts", async ctx => {
+  const url = new URL(ctx.url);
+  const agent = url.searchParams.get("agent") ?? undefined;
+  return json(await listAlerts(agent, Number(url.searchParams.get("k") ?? 20)));
+});
+
+route("DELETE", "/api/alerts", async ctx => {
+  requireRole(ctx, ["editor"]);
+  const url = new URL(ctx.url);
+  const agent = url.searchParams.get("agent") ?? undefined;
+  return json({ ok: true, cleared: await clearAlerts(agent) });
 });
 
 // overlays

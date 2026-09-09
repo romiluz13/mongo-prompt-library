@@ -10,6 +10,7 @@
 
 import type { WithId } from "mongodb";
 import { evalCases, evalRuns } from "./db";
+import { evaluate } from "./alerts";
 import { completeChat, llmConfig } from "./llm";
 import { getActive, getVersion, StoreError, subMacros } from "./store";
 import type { EvalCase, EvalResult, EvalRun } from "./types";
@@ -171,5 +172,7 @@ export async function runEvalSuite(
     regression: baseline_mean != null && mean < baseline_mean,
   };
   const res = await evalRuns.insertOne(run);
+  // observability: alert rules (score drops, regressions) fire on the write
+  await evaluate("eval_runs", { ...run, _id: res.insertedId });
   return { ...run, _id: res.insertedId };
 }

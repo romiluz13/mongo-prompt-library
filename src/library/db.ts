@@ -1,5 +1,16 @@
 import { MongoClient, type ClientSession } from "mongodb";
-import type { AgentPrompt, EvalCase, EvalRun, FewShot, Guardrail, PromptOverlay, Run, ToolDef } from "./types";
+import type {
+  AgentPrompt,
+  Alert,
+  AlertRule,
+  EvalCase,
+  EvalRun,
+  FewShot,
+  Guardrail,
+  PromptOverlay,
+  Run,
+  ToolDef,
+} from "./types";
 
 // Any MongoDB works: Atlas (SRV URI), local replica set (needed for change
 // streams), or atlas-local. Set MONGODB_URI; the library does the rest.
@@ -27,6 +38,8 @@ export const evalCases = db.collection<EvalCase>("eval_cases");
 export const evalRuns = db.collection<EvalRun>("eval_runs");
 export const tools = db.collection<ToolDef>("tools");
 export const guardrails = db.collection<Guardrail>("guardrails");
+export const alertRules = db.collection<AlertRule>("alert_rules");
+export const alerts = db.collection<Alert>("alerts");
 
 export async function connect(): Promise<void> {
   await client.connect();
@@ -47,6 +60,10 @@ async function ensureIndexes(): Promise<void> {
   await tools.createIndex({ name: 1 }, { unique: true });
   await guardrails.createIndex({ name: 1 }, { unique: true });
   await guardrails.createIndex({ active: 1 });
+  await alertRules.createIndex({ name: 1 }, { unique: true });
+  await alertRules.createIndex({ active: 1, source: 1 });
+  await alerts.createIndex({ ts: -1 });
+  await alerts.createIndex({ agent: 1, ts: -1 });
 }
 
 export async function close(): Promise<void> {

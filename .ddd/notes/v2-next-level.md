@@ -32,6 +32,10 @@ ergonomics. No preview/GA caveats anywhere in the repo.
 | Change streams as alert bus | Existing watch.ts (in production since v1) + landscape research | Extend the change feed: alert rules evaluated on run/prompt events → live alert feed in console | Pattern proven; rules logic new in slice 6 |
 | LLM-as-judge | Existing llm.ts gateway adapter (Grove, OpenAI-compatible, streaming) | Judge = same gateway, structured scoring prompt against rubric; scores stored per version in `eval_runs` | To verify in slice 3 |
 | $percentile/$facet analytics | Existing analytics() (in production) | Extend for eval scores + alert thresholds | Pattern proven |
+| $last in $group | Manual: reference/operator/aggregation/last (read 2026-09-10, 8.3 docs / cluster 8.0.32 core accumulator) | Order comes from a preceding `$sort` stage; missing field → `null` | Code: `$sort: {ts:1}` → `$group` `eval_mean: {$last:"$mean_score"}` matches the documented example. VERIFIED live: after re-running the v4 eval (mean 2), analytics served eval_mean 2/10 with eval_runs 4 (3 old + 1 new) — $last picked the newest by ts |
+| $size on possibly-missing array | Manual: reference/operator/aggregation/size (read 2026-09-10) | `$size` ERRORS if the argument is missing or not an array — must guard | Code: `$size: {$ifNull:["$guardrail_blocks", []]}`; VERIFIED live: analytics ran clean over runs that predate the guardrail_blocks field (guardrail_blocks 4 / blocked_runs 4 for support-triage) |
+| Alert rule evaluation point | Existing watch.ts pattern (in production) + design reasoning | DEVIATION from original plan: rules evaluate synchronously at write time (run.ts/eval.ts hooks after insert), not over the change stream — the writer already has the doc in memory, no second process, no double-evaluation on resume tokens. Change stream's job stays delivery: `alerts` is a watched collection so fired alerts stream to consoles with zero polling | VERIFIED live: alert row count went 4→5 in an open browser tab with no reload when a run crossed a latency threshold |
+| Alert contracts (DB-level rejection) | Same ensureValidators boot path proven in slices 1/3/5 (code 121 rejections) | Happy-path inserts (seed rules, evaluate() alerts, UI-created rules) all passed the contracts; direct bad-write probe into `alerts` skipped — the MCP insert tool rejected the array parameter (tooling gap, not a product gap) | OPEN: no negative DB probe for alert_rules/alerts; contracts are structurally identical to the probe-verified ones |
 
 ## Plan (slices, each: implement → verify → commit)
 
@@ -145,5 +149,34 @@ through the configured gateway. Slice 7 verified in the browser.
       tool_result events (name + args + result preview), guardrail block
       banners, and tools/guardrails counts in the run meta line
       (browser-verified with a live double-tool-call run)
-- [ ] Slice 6 — observability + alerting
+- [x] Slice 6 — observability + alerting VERIFIED live on Atlas with real
+      LLM runs: `alert_rules` + `alerts` collections with $jsonSchema
+      contracts (metrics latency_ms/tokens_out/guardrail_blocks on runs,
+      mean_score/regression on eval_runs; ops gt/lt/eq; source-metric
+      mismatch rejected 400 by upsertRule — probed over HTTP);
+      `src/library/alerts.ts` evaluate() loads active rules matching source
+      + agent (with "*" wildcard), extracts the metric, tests the op,
+      inserts Alert docs — hooked after every insertRun (blocked runs
+      included) and every eval_runs insert; VERIFIED: injection-blocked run
+      fired guardrail-spike (value 1, 0 tokens), a normal 20.4s run fired a
+      latency rule, and re-running the weak-v4 eval suite (mean 2 vs
+      baseline 7.5) fired BOTH eval-regression and score-drop from the
+      eval write; WATCHED extended to 9 collections (slim() drops
+      eval_runs.results) so fired alerts stream to consoles — VERIFIED in
+      the browser: alert rows went 4→5 live with no reload when a new run
+      crossed a threshold; analytics extended per agent with eval_runs/
+      eval_mean ($last after $sort — empirically picked the newest eval,
+      2/10)/eval_regressions and guardrail_blocks ($size+$ifNull — clean
+      over pre-guardrail runs)/blocked_runs; routes GET/POST/DELETE
+      /api/alert-rules + GET/DELETE /api/alerts (?agent&k); 4 seed rules
+      backfilled; console has a rules table + add-rule form (source-metric
+      select filtered per source) and a live alert feed — add and delete
+      of a probe rule both verified through the UI, rules table refreshes
+      itself via the alert_rules change event; `bunx tsc --noEmit` clean.
+      Gotcha recorded: restarting the server without MONGODB_URI silently
+      falls back to localhost:27017 and creates an empty promptlib db —
+      that stray local db was dropped; server now started with the Atlas
+      URI explicitly. OPEN: no direct negative DB probe for the two alert
+      collections (MCP insert tool rejected the array param); contracts
+      structurally identical to probe-verified ones from slices 1/3/5
 - [ ] Slice 7 — showcase surface + deploy + README

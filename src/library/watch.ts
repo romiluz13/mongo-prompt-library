@@ -11,7 +11,17 @@
 import type { Document } from "mongodb";
 import { db } from "./db";
 
-export const WATCHED = ["prompts", "overlays", "few_shots", "runs"] as const;
+export const WATCHED = [
+  "prompts",
+  "overlays",
+  "few_shots",
+  "runs",
+  "eval_runs",
+  "tools",
+  "guardrails",
+  "alert_rules",
+  "alerts",
+] as const;
 const OPS = ["insert", "update", "replace", "delete"] as const;
 
 const PIPELINE = [
@@ -53,6 +63,9 @@ function slim(ev: Ev): Document {
     if (frame.coll === "runs") {
       delete doc.input;
       delete doc.output;
+    }
+    if (frame.coll === "eval_runs") {
+      delete doc.results; // per-case judging detail; the table reads it lazily
     }
     frame.doc = doc;
   }

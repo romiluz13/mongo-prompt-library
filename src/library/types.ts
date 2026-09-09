@@ -149,6 +149,45 @@ export interface ResolvedBundle {
   resolved_at: string;
 }
 
+// ---- alerting (observability) -----------------------------------------------
+
+/**
+ * A rule evaluated against every run / eval-run the moment it is written.
+ * Rules are documents; agents, metrics, and thresholds are all editable at
+ * runtime. Fired rules insert Alert docs, which the change stream pushes to
+ * every open console — no polling anywhere.
+ */
+export interface AlertRule {
+  name: string;
+  description: string;
+  /** which write stream feeds the rule */
+  source: "runs" | "eval_runs";
+  /** runs: latency_ms | tokens_out | guardrail_blocks
+   *  eval_runs: mean_score | regression */
+  metric: "latency_ms" | "tokens_out" | "guardrail_blocks" | "mean_score" | "regression";
+  op: "gt" | "lt" | "eq";
+  threshold: number;
+  /** which agents the rule watches; ["*"] = every agent */
+  agents: string[];
+  active: boolean;
+  updated_at: Date;
+}
+
+/** A rule that fired, immutable, kept as the alert history feed. */
+export interface Alert {
+  ts: Date;
+  rule: string;
+  agent: string;
+  source: "runs" | "eval_runs";
+  metric: AlertRule["metric"];
+  op: AlertRule["op"];
+  threshold: number;
+  /** the observed value (guardrail count, ms, tokens, score, 0|1) */
+  value: number;
+  message: string;
+  version?: number;
+}
+
 export interface Run {
   ts: Date;
   agent: string;
