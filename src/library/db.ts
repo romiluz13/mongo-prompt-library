@@ -1,4 +1,4 @@
-import { MongoClient } from "mongodb";
+import { MongoClient, type ClientSession } from "mongodb";
 import type { AgentPrompt, FewShot, PromptOverlay, Run } from "./types";
 
 // Any MongoDB works: Atlas (SRV URI), local replica set (needed for change
@@ -42,4 +42,18 @@ async function ensureIndexes(): Promise<void> {
 
 export async function close(): Promise<void> {
   await client.close();
+}
+
+/**
+ * Run a unit of work inside a MongoDB transaction with automatic retry on
+ * transient commit errors. Used for lifecycle transitions that must flip
+ * two documents atomically (publish, rollback) — no version can ever be
+ * stranded between statuses.
+ */
+export async function withTx<T>(
+  fn: (session: ClientSession) => Promise<T>,
+): Promise<T> {
+  return client.withSession(async session => {
+    return session.withTransaction(async () => fn(session));
+  });
 }

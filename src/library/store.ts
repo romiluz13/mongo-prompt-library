@@ -1,5 +1,5 @@
 import type { WithId } from "mongodb";
-import { fewShots, overlays, prompts, runs } from "./db";
+import { fewShots, overlays, prompts, runs, withTx } from "./db";
 import type {
   AgentPrompt,
   FewShot,
@@ -80,8 +80,10 @@ export interface NewVersionInput {
 }
 
 /**
- * Every save is a new immutable version; the previous active version is
- * archived. Git-like history for prompts, without deploys.
+ * Every save is a new immutable version, born as a draft. The active prompt
+ * keeps serving until this draft is submitted, approved, and published —
+ * editors can iterate without touching production. Git-like history for
+ * prompts, without deploys.
  */
 export async function createVersion(
   agent: string,
@@ -92,15 +94,12 @@ export async function createVersion(
 
   const version = await nextVersion(agent);
   const prev = await getActive(agent);
-  if (prev) {
-    await prompts.updateOne({ _id: prev._id }, { $set: { status: "archived" } });
-  }
 
   const doc: AgentPrompt = {
     agent,
     field: FIELD,
     version,
-    status: "active",
+    status: "draft",
     body: input.body,
     macros: input.macros ?? prev?.macros ?? {},
     variants: input.variants ?? prev?.variants ?? [],
@@ -112,21 +111,137 @@ export async function createVersion(
   return { ...doc, _id: res.insertedId };
 }
 
-/** Re-activate an archived version. No revert PR, no deploy — one write. */
+/** Draft → in_review: an editor asks a reviewer to look at this version. */
+export async function submitForReview(
+  agent: string,
+  version: number,
+  by = "editor@promptlib",
+): Promise<WithId<AgentPrompt>> {
+  const target = await mustFind(agent, version);
+  if (target.status !== "draft") {
+    throw new StoreError(
+      `v${version} is ${target.status}; only drafts can be submitted for review`,
+      409,
+    );
+  }
+  const now = new Date();
+  await prompts.updateOne(
+    { _id: target._id },
+    { $set: { status: "in_review", submitted_by: by, submitted_at: now } },
+  );
+  return { ...target, status: "in_review", submitted_by: by, submitted_at: now };
+}
+
+/**
+ * In_review → approved (or back to draft on rejection). Approving records
+ * who signed off; rejecting clears the review state so the editor can
+ * iterate and resubmit.
+ */
+export async function reviewVersion(
+  agent: string,
+  version: number,
+  decision: "approve" | "reject",
+  by = "reviewer@promptlib",
+): Promise<WithId<AgentPrompt>> {
+  const target = await mustFind(agent, version);
+  if (target.status !== "in_review") {
+    throw new StoreError(
+      `v${version} is ${target.status}; only versions in review can be ${decision}d`,
+      409,
+    );
+  }
+  const now = new Date();
+  if (decision === "approve") {
+    await prompts.updateOne(
+      { _id: target._id },
+      { $set: { status: "approved", approved_by: by, approved_at: now } },
+    );
+    return { ...target, status: "approved", approved_by: by, approved_at: now };
+  }
+  await prompts.updateOne(
+    { _id: target._id },
+    { $set: { status: "draft" }, $unset: { approved_by: "", approved_at: "" } },
+  );
+  return { ...target, status: "draft" };
+}
+
+/**
+ * Approved → active, atomically: the previous active version archives and
+ * the new version activates inside ONE transaction — a crash can never
+ * leave two actives or zero actives. This is the release moment.
+ */
+export async function publish(
+  agent: string,
+  version: number,
+  by = "admin@promptlib",
+): Promise<WithId<AgentPrompt>> {
+  const target = await mustFind(agent, version);
+  if (target.status !== "approved") {
+    throw new StoreError(
+      `v${version} is ${target.status}; only approved versions can be published`,
+      409,
+    );
+  }
+  return withTx(async session => {
+    const prev = await prompts.findOne(
+      { agent, field: FIELD, status: "active" },
+      { session, sort: { version: -1 } },
+    );
+    if (prev && prev.version !== version) {
+      await prompts.updateOne(
+        { _id: prev._id },
+        { $set: { status: "archived" } },
+        { session },
+      );
+    }
+    const now = new Date();
+    await prompts.updateOne(
+      { _id: target._id },
+      { $set: { status: "active", published_by: by, published_at: now } },
+      { session },
+    );
+    return { ...target, status: "active", published_by: by, published_at: now };
+  });
+}
+
+/** Re-activate an archived version — transactional, like publish. */
 export async function rollback(
   agent: string,
   version: number,
 ): Promise<WithId<AgentPrompt>> {
+  const target = await mustFind(agent, version);
+  if (target.status === "active") return target;
+  if (target.status !== "archived" && target.status !== "approved") {
+    throw new StoreError(
+      `v${version} is ${target.status}; only archived (previously live) or approved versions can be activated`,
+      409,
+    );
+  }
+  return withTx(async session => {
+    const prev = await prompts.findOne(
+      { agent, field: FIELD, status: "active" },
+      { session, sort: { version: -1 } },
+    );
+    if (prev && prev.version !== version) {
+      await prompts.updateOne(
+        { _id: prev._id },
+        { $set: { status: "archived" } },
+        { session },
+      );
+    }
+    await prompts.updateOne(
+      { _id: target._id },
+      { $set: { status: "active" } },
+      { session },
+    );
+    return { ...target, status: "active" };
+  });
+}
+
+async function mustFind(agent: string, version: number): Promise<WithId<AgentPrompt>> {
   const target = await prompts.findOne({ agent, field: FIELD, version });
   if (!target) throw new StoreError(`version ${version} not found`, 404);
-  if (target.status === "active") return target;
-
-  const prev = await getActive(agent);
-  if (prev) {
-    await prompts.updateOne({ _id: prev._id }, { $set: { status: "archived" } });
-  }
-  await prompts.updateOne({ _id: target._id }, { $set: { status: "active" } });
-  return { ...target, status: "active" };
+  return target;
 }
 
 export async function upsertOverlay(

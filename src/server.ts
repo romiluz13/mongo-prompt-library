@@ -11,11 +11,14 @@ import {
   listFewShots,
   listOverlays,
   listVersions,
+  publish,
   resolvePrompt,
+  reviewVersion,
   rollback,
   setSplit,
   stats,
   StoreError,
+  submitForReview,
   upsertOverlay,
 } from "./library/store";
 import { seedIfEmpty } from "./library/seed";
@@ -50,6 +53,40 @@ async function body<T>(req: Request): Promise<T> {
   }
 }
 
+// ---- RBAC --------------------------------------------------------------------
+// Three personas gate the lifecycle. With no keys configured every route is
+// open (local demo mode). Configure any of these to enforce separation of
+// duties — clients present their key in the x-api-key header:
+//   PROMPTLIB_EDITOR_KEY    — create versions, submit for review, overlays, few-shots
+//   PROMPTLIB_REVIEWER_KEY  — approve / reject versions in review
+//   PROMPTLIB_ADMIN_KEY     — everything: publish, rollback, traffic split, seed
+
+type Role = "editor" | "reviewer" | "admin";
+
+const roleKeys: { key: string; role: Role }[] = (
+  [
+    [process.env.PROMPTLIB_ADMIN_KEY, "admin"],
+    [process.env.PROMPTLIB_EDITOR_KEY, "editor"],
+    [process.env.PROMPTLIB_REVIEWER_KEY, "reviewer"],
+  ] as const
+)
+  .filter(([key]) => Boolean(key))
+  .map(([key, role]) => ({ key: key as string, role: role as Role }));
+
+function roleFor(req: Request): Role | null {
+  const key = req.headers.get("x-api-key") ?? "";
+  if (!key) return null;
+  return roleKeys.find(k => k.key === key)?.role ?? null;
+}
+
+function requireRole(ctx: Ctx, need: Role[]): void {
+  if (roleKeys.length === 0) return; // demo mode: no keys configured, open access
+  const role = roleFor(ctx);
+  if (!role) throw new StoreError("API key required: send it in the x-api-key header", 401);
+  if (role === "admin" || need.includes(role)) return;
+  throw new StoreError(`this action requires ${need.join(" or ")} access`, 403);
+}
+
 // ---- routes ------------------------------------------------------------------
 
 const routes: { method: string; pattern: RegExp; keys: string[]; handler: Handler }[] = [];
@@ -81,11 +118,35 @@ route("GET", "/api/prompts/:agent/versions", async ctx =>
 );
 
 route("POST", "/api/prompts/:agent", async ctx => {
+  requireRole(ctx, ["editor"]);
   const input = await body<{ body: string; macros?: Record<string, string>; changelog: string; updated_by?: string }>(ctx);
   return json(await createVersion(ctx.params.agent, input), 201);
 });
 
+// lifecycle: draft → in_review → approved → active (transactional publish)
+route("POST", "/api/prompts/:agent/:version/submit", async ctx => {
+  requireRole(ctx, ["editor"]);
+  const { by } = await body<{ by?: string }>(ctx).catch(() => ({}) as { by?: string });
+  return json(await submitForReview(ctx.params.agent, Number(ctx.params.version), by));
+});
+
+route("POST", "/api/prompts/:agent/:version/review", async ctx => {
+  requireRole(ctx, ["reviewer"]);
+  const { decision, by } = await body<{ decision: "approve" | "reject"; by?: string }>(ctx);
+  if (decision !== "approve" && decision !== "reject") {
+    return json({ error: "decision must be 'approve' or 'reject'" }, 400);
+  }
+  return json(await reviewVersion(ctx.params.agent, Number(ctx.params.version), decision, by));
+});
+
+route("POST", "/api/prompts/:agent/:version/publish", async ctx => {
+  requireRole(ctx, ["admin"]);
+  const { by } = await body<{ by?: string }>(ctx).catch(() => ({}) as { by?: string });
+  return json(await publish(ctx.params.agent, Number(ctx.params.version), by));
+});
+
 route("POST", "/api/prompts/:agent/rollback", async ctx => {
+  requireRole(ctx, ["admin"]);
   const { version } = await body<{ version: number }>(ctx);
   return json(await rollback(ctx.params.agent, version));
 });
@@ -102,12 +163,14 @@ route("GET", "/api/resolve/:agent", async ctx => {
 route("GET", "/api/overlays/:agent", async ctx => json(await listOverlays(ctx.params.agent)));
 
 route("POST", "/api/overlays/:agent/:tenant", async ctx => {
+  requireRole(ctx, ["editor"]);
   const patch = await body<{ body_append?: string; macros?: Record<string, string> }>(ctx);
   await upsertOverlay(ctx.params.agent, ctx.params.tenant, patch);
   return json({ ok: true, agent: ctx.params.agent, tenant: ctx.params.tenant });
 });
 
 route("DELETE", "/api/overlays/:agent/:tenant", async ctx => {
+  requireRole(ctx, ["editor"]);
   await deleteOverlay(ctx.params.agent, ctx.params.tenant);
   return json({ ok: true });
 });
@@ -116,11 +179,13 @@ route("DELETE", "/api/overlays/:agent/:tenant", async ctx => {
 route("GET", "/api/fewshots/:agent", async ctx => json(await listFewShots(ctx.params.agent)));
 
 route("POST", "/api/fewshots/:agent", async ctx => {
+  requireRole(ctx, ["editor"]);
   const { text, note } = await body<{ text: string; note?: string }>(ctx);
   return json(await addFewShot(ctx.params.agent, text, note), 201);
 });
 
 route("DELETE", "/api/fewshots/:id", async ctx => {
+  requireRole(ctx, ["editor"]);
   await deleteFewShot(ctx.params.id);
   return json({ ok: true });
 });
@@ -129,6 +194,7 @@ route("DELETE", "/api/fewshots/:id", async ctx => {
 route("GET", "/api/ab/:agent", async ctx => json(await abStats(ctx.params.agent)));
 
 route("POST", "/api/ab/:agent/split", async ctx => {
+  requireRole(ctx, ["admin"]);
   const w = await body<{ a: number; b: number }>(ctx);
   return json(await setSplit(ctx.params.agent, w));
 });
@@ -199,7 +265,10 @@ function sseResponse(gen: AsyncGenerator<string>): Response {
 }
 
 // ops
-route("POST", "/api/seed", async () => json(await seedIfEmpty()));
+route("POST", "/api/seed", async ctx => {
+  requireRole(ctx, ["admin"]);
+  return json(await seedIfEmpty());
+});
 route("GET", "/api/stats", async () => json({ db: DB_NAME, ...(await stats()) }));
 route("GET", "/api/analytics", async () => json(await analytics()));
 

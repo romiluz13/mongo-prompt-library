@@ -84,7 +84,18 @@ through the configured gateway. Slice 7 verified in the browser.
       4 bad writes with code 121 (bad status enum, missing changelog,
       additionalProperties patch key, negative latency); API surfaces 400 with
       full schemaRulesNotSatisfied details (verified over HTTP)
-- [ ] Slice 2 — approval workflow + RBAC
+- [x] Slice 2 — approval workflow + RBAC VERIFIED live on Atlas: full
+      lifecycle walked over HTTP (create → draft, publish-draft 409, submit →
+      in_review w/ submitted_by, double-submit 409, approve → approved w/
+      approved_by, publish → transactional flip [v1 archived + v2 active],
+      resolve serves v2, reject returns draft, rollback transactional back to
+      v1); the in_review/submitted_by update passing also proves the updated
+      $jsonSchema enum is live (old enum would 121); RBAC verified with
+      keys on a second server: no/wrong key 401, editor create 201 +
+      review/publish 403, reviewer author 403 + review allowed, admin-only
+      seed/split/publish; console renders DRAFT/IN REVIEW/APPROVED/ACTIVE/
+      ARCHIVED badges, per-status action buttons, review trail, and a
+      new-version draft composer (browser-verified)
 - [ ] Slice 3 — eval gate
 - [ ] Slice 4 — hybrid search
 - [ ] Slice 5 — tools + guardrails bundle

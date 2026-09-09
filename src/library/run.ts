@@ -26,12 +26,13 @@ const WRITE_PROMPT_VERSION_TOOL: ChatTool = {
   function: {
     name: "write_prompt_version",
     description:
-      "Create a new active system-prompt version for this agent. Use ONLY when the user " +
-      "explicitly asks to change this agent's instructions, tone, rules, or behavior " +
-      '(e.g. "make the tone friendlier", "always mention the SLA"). ' +
-      "Do NOT use this tool for answering questions, drafting content, or logging — " +
-      "those are normal replies, not instruction changes. If no instruction change " +
-      "was requested, reply in text only.",
+      "Create a new draft system-prompt version for this agent. It does NOT go live " +
+      "immediately — it lands in review, and a human must approve and publish it. " +
+      "Use ONLY when the user explicitly asks to change this agent's instructions, " +
+      'tone, rules, or behavior (e.g. "make the tone friendlier", "always mention ' +
+      'the SLA"). Do NOT use this tool for answering questions, drafting content, or ' +
+      "logging — those are normal replies, not instruction changes. If no instruction " +
+      "change was requested, reply in text only.",
     parameters: {
       type: "object",
       properties: {
@@ -243,10 +244,11 @@ export async function* streamRunEvents(
               result: {
                 agent: string;
                 version: number;
-                status: "active";
+                status: "draft";
                 changelog: string;
                 updated_by: string;
                 variants_cleared: string[];
+                next: string;
               };
             };
 
@@ -284,10 +286,13 @@ export async function* streamRunEvents(
                 result: {
                   agent,
                   version: doc.version,
-                  status: "active",
+                  status: "draft",
                   changelog: doc.changelog,
                   updated_by: doc.updated_by,
                   variants_cleared: variantsCleared,
+                  next:
+                    "draft created — submit it for review, then approve and publish " +
+                    "from the console to go live",
                 },
               };
             } catch (e) {

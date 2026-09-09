@@ -85,10 +85,19 @@
   .badge { font-size: 10.5px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
   .badge.active { color: var(--green); border-color: var(--green); }
   .badge.archived { color: var(--muted); }
+  .badge.draft { color: var(--amber); border-color: var(--amber); }
+  .badge.in_review { color: var(--blue); border-color: var(--blue); }
+  .badge.approved { color: var(--teal); border-color: var(--teal); }
   .version .cl { color: var(--muted); font-size: 12.5px; margin: 4px 0 6px; }
   .version pre { display: none; background: var(--bg); border-radius: 6px; padding: 10px; margin: 0; max-height: 260px; overflow-y: auto; white-space: pre-wrap; }
   .version pre.open { display: block; }
   .version .who { color: var(--muted); font-size: 11.5px; font-family: var(--mono); }
+  .version .trail { color: var(--muted); font-size: 11px; font-family: var(--mono); margin-top: 3px; }
+  .version .trail b { color: var(--teal); font-weight: 600; }
+  /* new version composer */
+  .newver textarea { min-height: 90px; }
+  .newver-row { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  .newver-row input { flex: 1; min-width: 220px; }
   /* ab */
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th { text-align: left; color: var(--muted); font-weight: 500; font-size: 11.5px; text-transform: uppercase; letter-spacing: .5px; padding: 4px 8px 4px 0; }
@@ -163,6 +172,15 @@ async function api(path, opts) {
 }
 
 let currentAgent = null;
+
+/** Review trail line: who submitted, who approved, who published, and when. */
+function reviewTrail(v) {
+  const steps = [];
+  if (v.submitted_by) steps.push(`submitted <b>${esc(v.submitted_by)}</b> ${fmtDate(v.submitted_at)}`);
+  if (v.approved_by) steps.push(`approved <b>${esc(v.approved_by)}</b> ${fmtDate(v.approved_at)}`);
+  if (v.published_by) steps.push(`published <b>${esc(v.published_by)}</b> ${fmtDate(v.published_at)}`);
+  return steps.length ? `<div class="trail">${steps.join(" · ")}</div>` : "";
+}
 
 // ---------- header chips ----------
 async function loadStats() {
@@ -275,6 +293,8 @@ async function renderDetail() {
     verdictHTML: $("verdictRow")?.innerHTML ?? "",
     verdictShown: !!$("verdictRow") && $("verdictRow").style.display !== "none",
     running: $("runBtn")?.disabled ?? false,
+    nvBody: $("nvBody")?.value ?? "",
+    nvChangelog: $("nvChangelog")?.value ?? "",
   };
 
   $("detail").innerHTML = `
@@ -323,21 +343,34 @@ async function renderDetail() {
     </div>
 
     <div class="detail-col">
-      <h4>Version history <span class="sub">(immutable — rollback is one write)</span></h4>
+      <h4>Version history <span class="sub">(immutable — lifecycle: draft → review → approved → live)</span></h4>
       ${versions.map(v => `
         <div class="version" id="ver-${v.version}">
           <div class="vhead">
             <span class="vnum">v${v.version}</span>
-            <span class="badge ${v.status}">${v.status}</span>
+            <span class="badge ${v.status}">${v.status.replace("_", " ")}</span>
             <span class="who">${esc(v.updated_by)} · ${fmtDate(v.updated_at)}</span>
             <span style="margin-left:auto; display:flex; gap:6px">
-              <button class="small" onclick="toggleBody(${v.version})">${variants.length ? "view body" : "view"}</button>
-              ${v.status !== "active" ? `<button class="small" onclick="doRollback(${v.version})">rollback to v${v.version}</button>` : ""}
+              <button class="small" onclick="toggleBody(${v.version})">view body</button>
+              ${v.status === "draft" ? `<button class="small" onclick="doSubmit(${v.version})">submit for review</button>` : ""}
+              ${v.status === "in_review" ? `<button class="small" onclick="doReview(${v.version}, 'approve')">approve</button><button class="small danger" onclick="doReview(${v.version}, 'reject')">reject</button>` : ""}
+              ${v.status === "approved" ? `<button class="small primary" onclick="doPublish(${v.version})">publish → live</button>` : ""}
+              ${v.status === "archived" ? `<button class="small" onclick="doRollback(${v.version})">rollback to v${v.version}</button>` : ""}
             </span>
           </div>
           <div class="cl">${esc(v.changelog)}</div>
+          ${reviewTrail(v)}
           <pre id="body-${v.version}">${esc(v.body)}</pre>
         </div>`).join("")}
+
+      <h4>New version <span class="sub">(creates a draft — nothing goes live without approval)</span></h4>
+      <div class="newver">
+        <textarea id="nvBody" placeholder="the complete new system prompt body…"></textarea>
+        <div class="newver-row">
+          <input id="nvChangelog" placeholder="changelog: what changed and why" />
+          <button class="small" onclick="doCreateVersion()">create draft</button>
+        </div>
+      </div>
 
       <h4>A/B traffic split</h4>
       ${variants.length === 0 ? `<div class="empty">no variants on this agent</div>` : `
@@ -402,6 +435,8 @@ async function renderDetail() {
     }
   }
   if (prev.running) { $("runBtn").disabled = true; $("runSpin").style.display = ""; }
+  if (prev.nvBody) $("nvBody").value = prev.nvBody;
+  if (prev.nvChangelog) $("nvChangelog").value = prev.nvChangelog;
 }
 
 function toggleBody(version) {
@@ -409,11 +444,50 @@ function toggleBody(version) {
   el.classList.toggle("open");
 }
 
+// ---------- version lifecycle actions ----------
+
+async function lifecycle(path, body = {}) {
+  try {
+    await api(`/api/prompts/${currentAgent}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (e) { alert(e.message); }
+}
+
+async function doCreateVersion() {
+  const body = $("nvBody").value.trim();
+  const changelog = $("nvChangelog").value.trim();
+  if (!body || !changelog) return alert("body and changelog are required");
+  try {
+    const v = await api(`/api/prompts/${currentAgent}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ body, changelog }),
+    });
+    $("nvBody").value = ""; $("nvChangelog").value = "";
+  } catch (e) { alert(e.message); }
+}
+
+async function doSubmit(version) {
+  if (!confirm(`Submit v${version} for review?`)) return;
+  await lifecycle(`/${version}/submit`, { by: "editor@console" });
+}
+
+async function doReview(version, decision) {
+  if (!confirm(`${decision === "approve" ? "Approve" : "Reject"} v${version}?`)) return;
+  await lifecycle(`/${version}/review`, { decision, by: "reviewer@console" });
+}
+
+async function doPublish(version) {
+  if (!confirm(`Publish v${version}? The current active version archives atomically in one transaction.`)) return;
+  await lifecycle(`/${version}/publish`, { by: "admin@console" });
+}
+
 async function doRollback(version) {
   if (!confirm(`Rollback ${currentAgent} to v${version}? One write, no deploy.`)) return;
-  try {
-    await api(`/api/prompts/${currentAgent}/rollback`, { method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify({ version }) });
-  } catch (e) { alert(e.message); }
+  await lifecycle("/rollback", { version });
 }
 
 async function doSplit() {
@@ -502,10 +576,10 @@ async function doRun() {
           if (st) st.textContent += ev.text;
           out.scrollTop = out.scrollHeight;
         } else if (ev.type === "tool_call") {
-          out.insertAdjacentHTML("beforeend", `\n<span class="flash-note">⟳ tool ${esc(ev.name)} → writing v${"" }prompt version…</span>\n`);
+          out.insertAdjacentHTML("beforeend", `\n<span class="flash-note">⟳ tool ${esc(ev.name)} → drafting a new prompt version…</span>\n`);
         } else if (ev.type === "tool_result") {
           out.insertAdjacentHTML("beforeend", ev.ok
-            ? `<span class="flash-note">✓ new version v${ev.result.version} is live (${esc(ev.result.changelog)})</span>\n`
+            ? `<span class="flash-note">✓ draft v${ev.result.version} created — it goes live only after review + publish (${esc(ev.result.changelog)})</span>\n`
             : `<span class="err">✗ ${esc(ev.error.message)}</span>\n`);
         } else if (ev.type === "done") {
           document.querySelector(".cursor")?.remove();

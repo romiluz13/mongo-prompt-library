@@ -1,6 +1,7 @@
 /** Domain types for the prompt library. */
 
-export type PromptStatus = "active" | "draft" | "archived";
+/** Version lifecycle: draft → in_review → approved → active → archived. */
+export type PromptStatus = "draft" | "in_review" | "approved" | "active" | "archived";
 
 export interface Variant {
   id: string; // "A" | "B" | ...
@@ -21,6 +22,13 @@ export interface AgentPrompt {
   changelog: string;
   updated_by: string;
   updated_at: Date;
+  /** review trail — who moved this version through the lifecycle, and when */
+  submitted_by?: string;
+  submitted_at?: Date;
+  approved_by?: string;
+  approved_at?: Date;
+  published_by?: string;
+  published_at?: Date;
 }
 
 export interface OverlayPatch {
