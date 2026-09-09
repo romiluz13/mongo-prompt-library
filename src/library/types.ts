@@ -66,6 +66,44 @@ export interface ResolvedPrompt {
   resolved_at: string;
 }
 
+// ---- evals -------------------------------------------------------------------
+
+/** A golden case: input fed to the candidate prompt + the judge's rubric. */
+export interface EvalCase {
+  agent: string;
+  input: string;
+  rubric: string;
+  updated_at: Date;
+}
+
+/** One judged case inside an eval run. */
+export interface EvalResult {
+  case_id: string;
+  input: string;
+  rubric: string;
+  /** 0-10, judged by the LLM against the rubric */
+  score: number;
+  rationale: string;
+}
+
+/** One suite execution against a specific prompt version. */
+export interface EvalRun {
+  ts: Date;
+  agent: string;
+  version: number;
+  /** model that produced the candidate outputs */
+  model: string;
+  /** model that judged them */
+  judge_model: string;
+  results: EvalResult[];
+  mean_score: number;
+  /** the active version this run was compared against, if any */
+  baseline_version: number | null;
+  baseline_mean: number | null;
+  /** true when mean_score dropped below the baseline — blocks publish */
+  regression: boolean;
+}
+
 export interface Run {
   ts: Date;
   agent: string;

@@ -1,6 +1,6 @@
-import { fewShots, overlays, prompts } from "./db";
+import { evalCases, fewShots, overlays, prompts } from "./db";
 import { getActive } from "./store";
-import type { AgentPrompt, FewShot, PromptOverlay, Variant } from "./types";
+import type { AgentPrompt, EvalCase, FewShot, PromptOverlay, Variant } from "./types";
 
 /**
  * Demo seed: four different agents, each with a version history, A/B variants,
@@ -169,10 +169,61 @@ const SEED_FEWSHOTS: Omit<FewShot, "updated_at">[] = [
   { agent: "marketing-copy", text: "Release note for a speed improvement: 'Exports that took a coffee break now take a sip. We rebuilt the export pipeline — 6x faster on big workspaces. Your biggest board deck is the best benchmark: try it.'" },
 ];
 
+const SEED_EVAL_CASES: Omit<EvalCase, "updated_at">[] = [
+  // support-triage
+  {
+    agent: "support-triage",
+    input: "Ticket: 'Everything 500s since the 14:00 deploy. We can't take orders. This is a 6-figure day for us.'",
+    rubric: "Classifies as P1 (outage with revenue impact), routes to platform-oncall, reply names the next step, an owner, and an ETA, mentions escalation channel for P1/P2, tone stays calm and specific.",
+  },
+  {
+    agent: "support-triage",
+    input: "Ticket: 'How do I invite my teammate to the workspace? I keep looking under Billing.'",
+    rubric: "Classifies as P4 (how-to, no urgency), routes to self-serve docs or gives direct steps, reply is short and actionable, no unnecessary escalation.",
+  },
+  // code-reviewer
+  {
+    agent: "code-reviewer",
+    input: "PR description: 'Adds a /status endpoint that reports node health. Reads config from a query param and builds a shell command to fetch disk usage.' (diff builds a shell command from user-controlled query param)",
+    rubric: "Flags command injection as a BLOCKER (user input flowing into a shell command), verdict is request changes, gives a file:line-style finding with a one-line fix, does not continue to lesser concerns before the blocker.",
+  },
+  {
+    agent: "code-reviewer",
+    input: "PR description: 'Renames getUserById to fetchUser across 14 files, all mechanical, tests updated and green.'",
+    rubric: "Verdict is approve (mechanical rename, no correctness/security surface), at most a minor readability note, no invented blockers.",
+  },
+  // research-assistant
+  {
+    agent: "research-assistant",
+    input: "Brief request: 'Should we add SSO to our internal admin tool? It has 40 users, all employees.'",
+    rubric: "Frames the question in one sentence, findings are claim + evidence + confidence, states what could not be verified, closes with a 3-bullet TL;DR, no padding or disclaimers instead of substance.",
+  },
+  // marketing-copy
+  {
+    agent: "marketing-copy",
+    input: "Write a 2-sentence hero for a background-jobs product: 'our jobs run reliably and we alert on failures'.",
+    rubric: "Leads with the reader's problem (silent job failures) not the product, benefits before features, one idea per sentence, ends with or implies a concrete next action, no banned words (leverage, synergy, revolutionary, game-changing).",
+  },
+];
+
 /** Idempotent: seeds only when the library is empty. */
 export async function seedIfEmpty() {
+  // golden eval cases seed independently: an existing library can still lack
+  // them, and the publish gate is useless without cases to judge against
+  let evalCasesSeeded = 0;
+  if ((await evalCases.countDocuments()) === 0) {
+    await evalCases.insertMany(SEED_EVAL_CASES.map(c => ({ ...c, updated_at: new Date() })));
+    evalCasesSeeded = SEED_EVAL_CASES.length;
+  }
+
   const count = await prompts.countDocuments();
-  if (count > 0) return { seeded: false, prompts: count };
+  if (count > 0) {
+    return {
+      seeded: false,
+      prompts: count,
+      ...(evalCasesSeeded ? { eval_cases_seeded: evalCasesSeeded } : {}),
+    };
+  }
 
   await prompts.insertMany(SEED_PROMPTS);
   await overlays.insertMany(SEED_OVERLAYS.map(o => ({ ...o })));
@@ -184,6 +235,7 @@ export async function seedIfEmpty() {
     prompts: SEED_PROMPTS.length,
     overlays: SEED_OVERLAYS.length,
     few_shots: SEED_FEWSHOTS.length,
+    eval_cases: SEED_EVAL_CASES.length,
     active_version: active?.version ?? null,
   };
 }

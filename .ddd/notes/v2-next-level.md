@@ -96,7 +96,19 @@ through the configured gateway. Slice 7 verified in the browser.
       seed/split/publish; console renders DRAFT/IN REVIEW/APPROVED/ACTIVE/
       ARCHIVED badges, per-status action buttons, review trail, and a
       new-version draft composer (browser-verified)
-- [ ] Slice 3 — eval gate
+- [x] Slice 3 — eval gate VERIFIED live on Atlas with real LLM runs:
+      `eval_cases` (6 golden cases seeded, backfills into existing libraries)
+      + `eval_runs` collections with $jsonSchema contracts (probe: code 121
+      rejects mean_score=99, missing judge_model, empty rubric); suite runs
+      the candidate version through the real gateway then LLM-judges each
+      output 0-10 against the case rubric; support-triage v3 (active)
+      scored 7.5 baseline, weak archived v1 scored 6.5 → regression flagged,
+      deliberately bad v4 scored 4.0 → publish blocked 409 naming both
+      scores, force:true override publishes (on the record), rollback
+      restored v3; console renders score history (mean/baseline/gate
+      columns, regression flags) + case management (browser-verified);
+      eval route needed `server.timeout(ctx, 0)` (Bun's 10s idle timeout
+      killed long LLM suites)
 - [ ] Slice 4 — hybrid search
 - [ ] Slice 5 — tools + guardrails bundle
 - [ ] Slice 6 — observability + alerting

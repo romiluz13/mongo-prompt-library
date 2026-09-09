@@ -270,13 +270,15 @@ async function openAgent(agent) {
 async function renderDetail() {
   if (!currentAgent) return;
   const agent = currentAgent;
-  const [active, versions, overlays, fewshots, ab, runs] = await Promise.all([
+  const [active, versions, overlays, fewshots, ab, runs, evalcases, evalruns] = await Promise.all([
     api(`/api/prompts/${agent}/active`).catch(() => null),
     api(`/api/prompts/${agent}/versions`),
     api(`/api/overlays/${agent}`),
     api(`/api/fewshots/${agent}`),
     api(`/api/ab/${agent}`),
     api(`/api/runs?agent=${agent}&k=10`).catch(() => []),
+    api(`/api/eval/cases/${agent}`).catch(() => []),
+    api(`/api/eval/${agent}`).catch(() => []),
   ]);
   if (currentAgent !== agent) return; // switched mid-flight
   const variants = active?.variants ?? [];
@@ -295,6 +297,8 @@ async function renderDetail() {
     running: $("runBtn")?.disabled ?? false,
     nvBody: $("nvBody")?.value ?? "",
     nvChangelog: $("nvChangelog")?.value ?? "",
+    ecInput: $("ecInput")?.value ?? "",
+    ecRubric: $("ecRubric")?.value ?? "",
   };
 
   $("detail").innerHTML = `
@@ -352,6 +356,7 @@ async function renderDetail() {
             <span class="who">${esc(v.updated_by)} · ${fmtDate(v.updated_at)}</span>
             <span style="margin-left:auto; display:flex; gap:6px">
               <button class="small" onclick="toggleBody(${v.version})">view body</button>
+              <button class="small" onclick="doRunEval(${v.version})" title="run the golden suite against this version (LLM + judge, takes a few seconds)">run eval</button>
               ${v.status === "draft" ? `<button class="small" onclick="doSubmit(${v.version})">submit for review</button>` : ""}
               ${v.status === "in_review" ? `<button class="small" onclick="doReview(${v.version}, 'approve')">approve</button><button class="small danger" onclick="doReview(${v.version}, 'reject')">reject</button>` : ""}
               ${v.status === "approved" ? `<button class="small primary" onclick="doPublish(${v.version})">publish → live</button>` : ""}
@@ -386,6 +391,37 @@ async function renderDetail() {
           <input id="splitB" type="number" value="${variants[1]?.weight ?? 50}" /> %
           <button class="small" onclick="doSplit()">set split</button>
         </div>`}
+
+      <h4>Evals <span class="sub">(golden cases, LLM-judged — regressions block publish)</span></h4>
+      ${evalruns.length === 0 ? `<div class="empty">no suite runs yet — run eval on any version above</div>` : `
+      <table>
+        <tr><th>when</th><th>version</th><th>mean</th><th>vs baseline</th><th>cases</th><th>gate</th></tr>
+        ${evalruns.map(er => `
+          <tr>
+            <td>${fmtDate(er.ts)}</td>
+            <td>v${er.version}</td>
+            <td><b style="color:${er.mean_score >= 7 ? "var(--green)" : er.mean_score >= 4 ? "var(--amber)" : "var(--red)"}">${er.mean_score.toFixed(1)}</b>/10</td>
+            <td>${er.baseline_version != null ? `v${er.baseline_version}: ${er.baseline_mean.toFixed(1)}` : "—"}</td>
+            <td>${er.results.map(r => r.score).join(", ")}</td>
+            <td>${er.regression ? `<span class="err">⚠ regression</span>` : `<span class="flash-note">pass</span>`}</td>
+          </tr>`).join("")}
+      </table>`}
+      <div class="sub" style="margin:8px 0 2px">golden cases — input + rubric, judged 0-10 per run</div>
+      ${evalcases.length === 0 ? `<div class="empty">no golden cases — the suite needs at least one</div>` : ""}
+      ${evalcases.map(ec => `
+        <div class="fewshot">
+          <div class="fshead">
+            <span class="score">case</span>
+            <button class="small danger" onclick="doDeleteEvalCase('${ec._id}')">remove</button>
+          </div>
+          <div><b>in:</b> ${esc(ec.input.slice(0, 140))}${ec.input.length > 140 ? "…" : ""}</div>
+          <div class="sub"><b>rubric:</b> ${esc(ec.rubric.slice(0, 160))}${ec.rubric.length > 160 ? "…" : ""}</div>
+        </div>`).join("")}
+      <div class="add-form">
+        <input id="ecInput" placeholder="golden input (a ticket, a PR, a request…)" style="flex-basis:100%" />
+        <input id="ecRubric" placeholder="rubric: what a good output must do" />
+        <button class="small" onclick="doAddEvalCase()">add case</button>
+      </div>
 
       <h4>Tenant overlays</h4>
       ${overlays.length === 0 ? `<div class="empty">no overlays — every tenant gets the base prompt</div>` : ""}
@@ -437,6 +473,8 @@ async function renderDetail() {
   if (prev.running) { $("runBtn").disabled = true; $("runSpin").style.display = ""; }
   if (prev.nvBody) $("nvBody").value = prev.nvBody;
   if (prev.nvChangelog) $("nvChangelog").value = prev.nvChangelog;
+  if (prev.ecInput) $("ecInput").value = prev.ecInput;
+  if (prev.ecRubric) $("ecRubric").value = prev.ecRubric;
 }
 
 function toggleBody(version) {
@@ -488,6 +526,38 @@ async function doPublish(version) {
 async function doRollback(version) {
   if (!confirm(`Rollback ${currentAgent} to v${version}? One write, no deploy.`)) return;
   await lifecycle("/rollback", { version });
+}
+
+// ---------- evals ----------
+
+async function doRunEval(version) {
+  const btn = event?.target;
+  if (btn) { btn.disabled = true; btn.textContent = "running…"; }
+  try {
+    const er = await api(`/api/eval/${currentAgent}/${version}`, { method: "POST" });
+    alert(`v${version} scored ${er.mean_score.toFixed(1)}/10` +
+      (er.baseline_version != null ? ` (baseline v${er.baseline_version}: ${er.baseline_mean.toFixed(1)})` : "") +
+      (er.regression ? " — ⚠ REGRESSION, publish will be blocked" : " — pass"));
+  } catch (e) {
+    alert(e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "run eval"; }
+  }
+}
+
+async function doAddEvalCase() {
+  const input = $("ecInput").value.trim();
+  const rubric = $("ecRubric").value.trim();
+  if (!input || !rubric) return alert("input and rubric are required");
+  try {
+    await api(`/api/eval/cases/${currentAgent}`, { method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify({ input, rubric }) });
+    $("ecInput").value = ""; $("ecRubric").value = "";
+  } catch (e) { alert(e.message); }
+}
+
+async function doDeleteEvalCase(id) {
+  if (!confirm("Remove this golden case?")) return;
+  try { await api(`/api/eval/cases/${id}`, { method: "DELETE" }); } catch (e) { alert(e.message); }
 }
 
 async function doSplit() {

@@ -112,12 +112,68 @@ const RUNS_VALIDATOR = {
   },
 };
 
+const EVAL_CASES_VALIDATOR = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: ["agent", "input", "rubric", "updated_at"],
+    properties: {
+      agent: { bsonType: "string", minLength: 1 },
+      input: { bsonType: "string", minLength: 1 },
+      rubric: { bsonType: "string", minLength: 1 },
+      updated_at: { bsonType: "date" },
+    },
+  },
+};
+
+const EVAL_RUNS_VALIDATOR = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: [
+      "ts",
+      "agent",
+      "version",
+      "model",
+      "judge_model",
+      "results",
+      "mean_score",
+      "regression",
+    ],
+    properties: {
+      ts: { bsonType: "date" },
+      agent: { bsonType: "string", minLength: 1 },
+      version: { bsonType: "int", minimum: 1 },
+      model: { bsonType: "string", minLength: 1 },
+      judge_model: { bsonType: "string", minLength: 1 },
+      results: {
+        bsonType: "array",
+        items: {
+          bsonType: "object",
+          required: ["case_id", "input", "rubric", "score", "rationale"],
+          properties: {
+            case_id: { bsonType: "string" },
+            input: { bsonType: "string" },
+            rubric: { bsonType: "string" },
+            score: { bsonType: "number", minimum: 0, maximum: 10 },
+            rationale: { bsonType: "string" },
+          },
+        },
+      },
+      mean_score: { bsonType: "number", minimum: 0, maximum: 10 },
+      baseline_version: { bsonType: ["int", "null"] },
+      baseline_mean: { bsonType: ["number", "null"] },
+      regression: { bsonType: "bool" },
+    },
+  },
+};
+
 /** All collection contracts in one place; new collections join here. */
 const CONTRACTS: Record<string, object> = {
   prompts: PROMPTS_VALIDATOR,
   overlays: OVERLAYS_VALIDATOR,
   few_shots: FEW_SHOTS_VALIDATOR,
   runs: RUNS_VALIDATOR,
+  eval_cases: EVAL_CASES_VALIDATOR,
+  eval_runs: EVAL_RUNS_VALIDATOR,
 };
 
 /**

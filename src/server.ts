@@ -22,6 +22,13 @@ import {
   upsertOverlay,
 } from "./library/store";
 import { seedIfEmpty } from "./library/seed";
+import {
+  addEvalCase,
+  deleteEvalCase,
+  listEvalCases,
+  listEvalRuns,
+  runEvalSuite,
+} from "./library/eval";
 import { ensureSemanticIndexes, routeAgent, semanticFewShots } from "./library/semantic";
 import { ensureSearchIndex, searchPrompts } from "./library/search";
 import { streamRunEvents } from "./library/run";
@@ -141,8 +148,8 @@ route("POST", "/api/prompts/:agent/:version/review", async ctx => {
 
 route("POST", "/api/prompts/:agent/:version/publish", async ctx => {
   requireRole(ctx, ["admin"]);
-  const { by } = await body<{ by?: string }>(ctx).catch(() => ({}) as { by?: string });
-  return json(await publish(ctx.params.agent, Number(ctx.params.version), by));
+  const { by, force } = await body<{ by?: string; force?: boolean }>(ctx).catch(() => ({}) as { by?: string; force?: boolean });
+  return json(await publish(ctx.params.agent, Number(ctx.params.version), by, { force: force === true }));
 });
 
 route("POST", "/api/prompts/:agent/rollback", async ctx => {
@@ -269,6 +276,29 @@ route("POST", "/api/seed", async ctx => {
   requireRole(ctx, ["admin"]);
   return json(await seedIfEmpty());
 });
+
+// evals — golden cases + judged suite runs (the publish gate)
+route("GET", "/api/eval/cases/:agent", async ctx => json(await listEvalCases(ctx.params.agent)));
+
+route("POST", "/api/eval/cases/:agent", async ctx => {
+  requireRole(ctx, ["editor"]);
+  const { input, rubric } = await body<{ input: string; rubric: string }>(ctx);
+  return json(await addEvalCase(ctx.params.agent, input, rubric), 201);
+});
+
+route("DELETE", "/api/eval/cases/:id", async ctx => {
+  requireRole(ctx, ["editor"]);
+  await deleteEvalCase(ctx.params.id);
+  return json({ ok: true });
+});
+
+route("POST", "/api/eval/:agent/:version", async ctx => {
+  requireRole(ctx, ["editor"]);
+  server.timeout(ctx, 0); // real LLM runs + judging: no 10s idle timeout
+  return json(await runEvalSuite(ctx.params.agent, Number(ctx.params.version)));
+});
+
+route("GET", "/api/eval/:agent", async ctx => json(await listEvalRuns(ctx.params.agent)));
 route("GET", "/api/stats", async () => json({ db: DB_NAME, ...(await stats()) }));
 route("GET", "/api/analytics", async () => json(await analytics()));
 

@@ -1,5 +1,5 @@
 import { MongoClient, type ClientSession } from "mongodb";
-import type { AgentPrompt, FewShot, PromptOverlay, Run } from "./types";
+import type { AgentPrompt, EvalCase, EvalRun, FewShot, PromptOverlay, Run } from "./types";
 
 // Any MongoDB works: Atlas (SRV URI), local replica set (needed for change
 // streams), or atlas-local. Set MONGODB_URI; the library does the rest.
@@ -23,6 +23,8 @@ export const prompts = db.collection<AgentPrompt>("prompts");
 export const overlays = db.collection<PromptOverlay>("overlays");
 export const fewShots = db.collection<FewShot>("few_shots");
 export const runs = db.collection<Run>("runs");
+export const evalCases = db.collection<EvalCase>("eval_cases");
+export const evalRuns = db.collection<EvalRun>("eval_runs");
 
 export async function connect(): Promise<void> {
   await client.connect();
@@ -38,6 +40,8 @@ async function ensureIndexes(): Promise<void> {
   await fewShots.createIndex({ agent: 1 });
   await runs.createIndex({ agent: 1, ts: -1 });
   await runs.createIndex({ agent: 1, variant: 1, verdict: 1 });
+  await evalCases.createIndex({ agent: 1 });
+  await evalRuns.createIndex({ agent: 1, version: 1, ts: -1 });
 }
 
 export async function close(): Promise<void> {

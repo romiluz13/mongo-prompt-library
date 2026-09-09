@@ -174,11 +174,24 @@ export async function publish(
   agent: string,
   version: number,
   by = "admin@promptlib",
+  opts: { force?: boolean } = {},
 ): Promise<WithId<AgentPrompt>> {
   const target = await mustFind(agent, version);
   if (target.status !== "approved") {
     throw new StoreError(
       `v${version} is ${target.status}; only approved versions can be published`,
+      409,
+    );
+  }
+  // eval gate: a scored regression on this version blocks the release
+  // (force publishes anyway — the human decided, and it's on the record)
+  const { latestEvalRun } = await import("./eval");
+  const latest = await latestEvalRun(agent, version);
+  if (latest?.regression && !opts.force) {
+    throw new StoreError(
+      `eval regression: v${version} scored ${latest.mean_score.toFixed(1)} vs ` +
+        `baseline v${latest.baseline_version} at ${latest.baseline_mean?.toFixed(1)} — ` +
+        `publish with force: true to override`,
       409,
     );
   }
@@ -242,6 +255,14 @@ async function mustFind(agent: string, version: number): Promise<WithId<AgentPro
   const target = await prompts.findOne({ agent, field: FIELD, version });
   if (!target) throw new StoreError(`version ${version} not found`, 404);
   return target;
+}
+
+/** Public read accessor for a single version (used by the eval runner). */
+export async function getVersion(
+  agent: string,
+  version: number,
+): Promise<WithId<AgentPrompt> | null> {
+  return prompts.findOne({ agent, field: FIELD, version });
 }
 
 export async function upsertOverlay(
